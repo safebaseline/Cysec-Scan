@@ -378,13 +378,14 @@ function Settings() { const [form, setForm] = useState<any>({}); const [msg, set
   useEffect(() => { api.getAIConfig().then(setAiCfg).catch(() => undefined); }, []);
   const [aiModels, setAiModels] = useState<string[]>([]);
   const [aiLoadingModels, setAiLoadingModels] = useState(false);
+  const [aiModelOpen, setAiModelOpen] = useState(false); // 模型下拉展开
   const saveAI = async () => { try { await api.setAIConfig(aiCfg); setAiMsg('已保存'); setAiCfg(await api.getAIConfig()); } catch (e: any) { setAiMsg(e.message); } };
   const fetchModels = async () => {
-    setAiLoadingModels(true); setAiMsg('');
+    setAiLoadingModels(true); setAiMsg(''); setAiModelOpen(false);
     try {
       const r = await api.aiModels(aiCfg.base_url, aiCfg.api_key);
       setAiModels(r.models || []);
-      if ((r.models || []).length === 0) { setAiMsg('API 返回 0 个模型'); }
+      if ((r.models || []).length === 0) { setAiMsg('API 返回 0 个模型'); } else { setAiModelOpen(true); }
     } catch (e: any) { setAiMsg('获取失败: ' + e.message); }
     finally { setAiLoadingModels(false); }
   };
@@ -403,8 +404,13 @@ function Settings() { const [form, setForm] = useState<any>({}); const [msg, set
       <div className="form-row">
         <label>API 地址<input style={{ width: 280 }} value={aiCfg.base_url || ''} onChange={(e) => setAiCfg({ ...aiCfg, base_url: e.target.value })} /></label>
         <label>模型
-            <input style={{ width: 160 }} list="ai-model-list" placeholder="点击获取" value={aiCfg.model || ''} onChange={(e) => setAiCfg({ ...aiCfg, model: e.target.value })} />
-            <datalist id="ai-model-list">{aiModels.map((m: string) => <option key={m} value={m} />)}</datalist>
+            <span style={{ position: 'relative', display: 'inline-block' }}>
+              <input style={{ width: 160 }} placeholder="点击获取" value={aiCfg.model || ''} onChange={(e) => setAiCfg({ ...aiCfg, model: e.target.value })} />
+              {aiModels.length > 0 && <button type="button" onClick={() => setAiModelOpen(!aiModelOpen)} style={{ fontSize: 10, padding: '6px 4px', marginLeft: 2, verticalAlign: 'top' }}>▼</button>}
+              {aiModelOpen && aiModels.length > 0 && (<div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 30, background: '#161B22', border: '1px solid #30363D', borderRadius: 4, maxHeight: 220, overflowY: 'auto', minWidth: 200, boxShadow: '0 4px 12px rgba(0,0,0,.4)' }}>
+                {aiModels.map((m: string) => (<div key={m} onMouseDown={() => { setAiCfg({ ...aiCfg, model: m }); setAiModelOpen(false); }} style={{ padding: '5px 10px', cursor: 'pointer', color: m === aiCfg.model ? '#58A6FF' : '#E6EDF3', whiteSpace: 'nowrap' }}>{m}</div>))}
+              </div>)}
+            </span>
             <button type="button" onClick={fetchModels} disabled={aiLoadingModels} style={{ marginTop: 4, fontSize: 12, padding: '2px 8px' }}>{aiLoadingModels ? '获取中…' : '获取模型列表'}</button>
           </label>
         <label>API Key<input type="password" style={{ width: 200 }} value={aiCfg.api_key || ''} onChange={(e) => setAiCfg({ ...aiCfg, api_key: e.target.value })} /></label>
