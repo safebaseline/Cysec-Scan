@@ -182,14 +182,17 @@ func (e *Engine) Execute(taskID int64) {
 			}
 		}
 	}
-	// 子域名爆破：目标为域名时执行（学习 ksubdomain：高并发 DNS + 字典 + 泛解析过滤）
+	// 子域名收集（爆破 + 证书透明度）；任务域名与收集到的子域名随后按 https/http 探测为 Web 资产
+	webDomains := append([]string{}, domains...)
 	if e.cfg.Scan.SubdomainBrute {
 		for _, d := range domains {
 			select {
 			case <-runCancel(e, task.ID):
 			default:
 			}
-			ips = e.bruteSubdomains(task, d, ips)
+			var names []string
+			ips, names = e.bruteSubdomains(task, d, ips)
+			webDomains = append(webDomains, names...)
 		}
 	}
 	// 证书透明度被动收集：不依赖字典，能发现历史子域（crt.name）
@@ -199,7 +202,9 @@ func (e *Engine) Execute(taskID int64) {
 			case <-runCancel(e, task.ID):
 			default:
 			}
-			ips = e.certSubdomains(task, d, ips)
+			var names []string
+			ips, names = e.certSubdomains(task, d, ips)
+			webDomains = append(webDomains, names...)
 		}
 	}
 	for _, ip := range ips {
@@ -210,6 +215,9 @@ func (e *Engine) Execute(taskID int64) {
 	for _, u := range urls {
 		e.detectWeb(task, u, "", task.TimeoutSec)
 	}
+
+	// 域名 Web 探测：vhost/CDN 场景下同一 IP 承载多个站点，按域名（Host 头）探测补充 Web 资产
+	e.probeDomainWebs(task, webDomains)
 
 	// 空间资产测绘（所有模式）：IP/域名 → FOFA/Quake/Shodan/0.zone/ZoomEye 等 Provider
 	// 测绘结果自动归一为资产并建立关联，测绘新发现的 IP 纳入后续本地扫描验证
@@ -421,8 +429,8 @@ func (e *Engine) detectWeb(task *model.ScanTask, webURL, ip string, timeoutSec i
 	}
 }
 
-// bruteSubdomains 对域名执行子域名爆破并入库；解析出的新 IP 纳入后续扫描
-func (e *Engine) bruteSubdomains(task *model.ScanTask, domain string, ips []string) []string {
+// bruteSubdomains 对域名执行子域名爆破并入库；返回（追加新解析 IP 的 ips，发现的子域列表）
+func (e *Engine) bruteSubdomains(task *model.ScanTask, domain string, ips []string) ([]string, []string) {
 	wordlist := subdomain.DefaultWordlist
 	if e.cfg.Scan.SubdomainWordlist != "" {
 		if data, err := os.ReadFile(e.cfg.Scan.SubdomainWordlist); err == nil {
@@ -461,15 +469,19 @@ func (e *Engine) bruteSubdomains(task *model.ScanTask, domain string, ips []stri
 	}
 	e.store.LogTask(task.ID, "info", fmt.Sprintf("子域名爆破 %s：发现 %d 个子域名，新增 %d 个解析 IP",
 		domain, len(results), newIPs))
-	return ips
+	names := make([]string, 0, len(results))
+	for _, r := range results {
+		names = append(names, r.Subdomain)
+	}
+	return ips, names
 }
 
-// certSubdomains 证书透明度（crt.name）被动收集子域名并入库；解析出的新 IP 纳入后续扫描
-func (e *Engine) certSubdomains(task *model.ScanTask, domain string, ips []string) []string {
+// certSubdomains 证书透明度（crt.name）被动收集子域名并入库；返回（追加新解析 IP 的 ips，成功解析的子域列表）
+func (e *Engine) certSubdomains(task *model.ScanTask, domain string, ips []string) ([]string, []string) {
 	subs := subdomain.CertQuery(domain, maxInt(task.TimeoutSec, 5))
 	if len(subs) == 0 {
 		e.store.LogTask(task.ID, "info", fmt.Sprintf("证书透明度收集 %s：未发现子域名", domain))
-		return ips
+		return ips, nil
 	}
 	// 并发解析（32）：CT 记录可能已过期，解析失败仅入库域名不填 IP
 	type item struct{ sub, ip, cname string }
@@ -495,13 +507,15 @@ func (e *Engine) certSubdomains(task *model.ScanTask, domain string, ips []strin
 	wg.Wait()
 	close(out)
 	newIPs := 0
+	resolved := make([]string, 0, len(subs))
 	for it := range out {
 		select {
 		case <-runCancel(e, task.ID):
-			return ips // 任务已取消：跳过剩余入库
+			return ips, resolved // 任务已取消：跳过剩余入库
 		default:
 		}
 		if it.ip != "" {
+			resolved = append(resolved, it.sub)
 			isNew, err := e.store.UpsertDomain(model.AssetDomain{
 				ProjectID: task.ProjectID, Domain: it.sub, CNAME: it.cname, IP: it.ip, Source: "crt-cert",
 			})
@@ -532,7 +546,68 @@ func (e *Engine) certSubdomains(task *model.ScanTask, domain string, ips []strin
 	}
 	e.store.LogTask(task.ID, "info", fmt.Sprintf("证书透明度收集 %s：发现 %d 个子域名，新增 %d 个解析 IP",
 		domain, len(subs), newIPs))
-	return ips
+	return ips, resolved
+}
+
+// probeDomainWebs 将任务域名与收集到的子域名按 https/http 探测为 Web 资产（vhost 场景与 IP 探测互补）。
+// 仅存活域名入库（探测失败的跳过，避免 CT 历史子域污染资产表），并发受 Worker.Concurrency 限制。
+func (e *Engine) probeDomainWebs(task *model.ScanTask, names []string) {
+	seen := map[string]bool{}
+	list := make([]string, 0, len(names))
+	for _, n := range names {
+		if n = strings.ToLower(strings.Trim(n, ".")); n != "" && !seen[n] {
+			seen[n] = true
+			list = append(list, n)
+		}
+	}
+	if len(list) == 0 {
+		return
+	}
+	workers := e.cfg.Worker.Concurrency
+	if workers <= 0 {
+		workers = 8
+	}
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	found := 0
+	timeout := maxInt(task.TimeoutSec, 3)
+	probeOne := func(name string) {
+		for _, scheme := range []string{"https", "http"} {
+			select {
+			case <-runCancel(e, task.ID):
+				return
+			default:
+			}
+			u := scheme + "://" + name
+			if newWebProber(timeout)(u, "") == nil {
+				continue // 不存活：不作为资产入库
+			}
+			mu.Lock()
+			found++
+			mu.Unlock()
+			e.detectWeb(task, u, "", timeout)
+		}
+	}
+	for _, n := range list {
+		select {
+		case <-runCancel(e, task.ID):
+			wg.Wait()
+			e.store.LogTask(task.ID, "info", "域名 Web 探测：任务已取消")
+			return
+		default:
+		}
+		wg.Add(1)
+		go func(n string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			probeOne(n)
+		}(n)
+	}
+	wg.Wait()
+	e.store.LogTask(task.ID, "info", fmt.Sprintf("域名 Web 探测完成：%d 个域名（含任务域名与收集子域），发现 %d 个存活 Web 站点",
+		len(list), found))
 }
 
 // autoAIAnalyze 对本次任务新检出的漏洞批量 AI 研判并自动标记
