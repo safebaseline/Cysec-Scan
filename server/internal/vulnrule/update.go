@@ -62,7 +62,6 @@ func DefaultSourceConfig() SourceConfig {
 		AutoDaily: false,
 		Sources: []Source{
 			{URL: "https://github.com/projectdiscovery/nuclei-templates", Enabled: true},
-			{URL: "https://github.com/adysec/nuclei_poc", Enabled: false},
 		},
 	}
 }
