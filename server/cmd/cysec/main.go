@@ -38,6 +38,7 @@ func main() {
 		log.Fatalf("加载配置失败: %v", err)
 	}
 	ua.Set(cfg.UserAgent)
+	ua.SetHeaders(cfg.Headers) // 漏洞扫描引擎出站请求附加的 HTTP 头（config.yaml headers 段）
 	if err := os.MkdirAll(filepath.Dir(cfg.Database.Path), 0o755); err != nil {
 		log.Fatalf("创建数据目录失败: %v", err)
 	}

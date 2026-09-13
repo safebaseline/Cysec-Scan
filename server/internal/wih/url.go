@@ -19,7 +19,7 @@ func ScanURL(rules []Rule, target string, timeoutSec int) ([]Hit, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", ua.Get())
+	ua.Apply(req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err

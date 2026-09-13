@@ -113,7 +113,7 @@ func (d restrictedDoer) Do(url string) (*plugins.HTTPResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", ua.Get())
+	ua.Apply(req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err

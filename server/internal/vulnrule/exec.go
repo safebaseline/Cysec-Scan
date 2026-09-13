@@ -203,7 +203,7 @@ func detectWAF(base string, timeoutSec int) bool {
 	if err != nil {
 		return false
 	}
-	req.Header.Set("User-Agent", ua.Get())
+	ua.Apply(req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return false
@@ -243,7 +243,7 @@ func runStep(st ExecStep, vars map[string]string, base string, timeoutSec int) (
 	if err != nil {
 		return false, "", "", "", err
 	}
-	req.Header.Set("User-Agent", ua.Get())
+	ua.Apply(req)
 	for k, v := range st.Headers {
 		req.Header.Set(k, v)
 	}
@@ -651,7 +651,7 @@ func baselineFingerprint(baseURL string, timeoutSec int) (bodyHash string, statu
 		if err != nil {
 			return "", 0
 		}
-		req.Header.Set("User-Agent", ua.Get())
+		ua.Apply(req)
 		resp, err := client.Do(req)
 		if err != nil {
 			return "", 0
