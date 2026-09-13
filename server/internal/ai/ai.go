@@ -132,7 +132,8 @@ func callLLM(cfg Config, systemPrompt, userPrompt string) (string, error) {
 			{"role": "user", "content": userPrompt},
 		},
 		"temperature": 0.1,
-		"max_tokens":  200,
+		// 给足输出空间：推理类模型（R1/qwq 等）先输出思考过程，200 token 会在 JSON 出现前被截断
+		"max_tokens": 1024,
 	}
 	data, _ := json.Marshal(reqBody)
 
@@ -214,7 +215,11 @@ func hasVersionSuffix(b string) bool {
 
 // parseVerdict 从 AI 回复中提取 JSON
 func parseVerdict(content string) (*Verdict, error) {
-	// AI 可能在 JSON 前后加文字，提取 JSON 部分
+	content = stripThinking(content)
+	// 优先取 ```json ... ``` / ``` ... ``` 围栏内容
+	if fenced := extractFenced(content); fenced != "" {
+		content = fenced
+	}
 	start := strings.Index(content, "{")
 	end := strings.LastIndex(content, "}")
 	if start < 0 || end < start {
@@ -231,6 +236,38 @@ func parseVerdict(content string) (*Verdict, error) {
 		return nil, fmt.Errorf("AI 返回无效 mark: %s", v.Mark)
 	}
 	return &v, nil
+}
+
+// stripThinking 剥离推理类模型（DeepSeek-R1 / QwQ 等）的思考过程：
+// 成对的 <think>...</think> 整段去除；未闭合的 <think>（截断）则保留其之后的内容
+func stripThinking(s string) string {
+	for {
+		i := strings.Index(s, "<think>")
+		if i < 0 {
+			return s
+		}
+		j := strings.Index(s[i:], "</think>")
+		if j < 0 {
+			return s[i+len("<think>"):] // 未闭合：思考被 max_tokens 截断，取已产出的正文
+		}
+		s = s[:i] + s[i+j+len("</think>"):]
+	}
+}
+
+// extractFenced 提取 markdown 代码围栏内容（```json {...} ```），无围栏返回空串
+func extractFenced(s string) string {
+	start := strings.Index(s, "```")
+	if start < 0 {
+		return ""
+	}
+	rest := s[start+3:]
+	if nl := strings.Index(rest, "\n"); nl >= 0 {
+		rest = rest[nl+1:] // 跳过 ```json 这一行
+	}
+	if end := strings.Index(rest, "```"); end >= 0 {
+		return rest[:end]
+	}
+	return ""
 }
 
 func truncate(s string, n int) string {

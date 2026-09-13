@@ -83,3 +83,35 @@ func TestListModelsMock(t *testing.T) {
 		})
 	}
 }
+
+func TestParseVerdict(t *testing.T) {
+	ok := `{"mark":"confirmed","confidence":"high","reasoning":"报文证据充分"}`
+	cases := []struct {
+		name string
+		in   string
+		mark string
+	}{
+		{"纯JSON", ok, "confirmed"},
+		{"前后带文字", "研判结果如下：\n" + ok + "\n以上。", "confirmed"},
+		{"围栏", "```json\n" + ok + "\n```", "confirmed"},
+		{"think闭合", "<think>让我分析一下报文……</think>" + ok, "confirmed"},
+		{"think未闭合(截断)", "<think>正在分析请求报文与响应报文，逐项对比", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v, err := parseVerdict(tc.in)
+			if tc.mark == "" {
+				if err == nil {
+					t.Fatal("应返回错误")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("解析失败: %v", err)
+			}
+			if v.Mark != tc.mark {
+				t.Fatalf("mark = %s", v.Mark)
+			}
+		})
+	}
+}
