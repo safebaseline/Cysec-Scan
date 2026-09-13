@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,7 +21,10 @@ type Store struct {
 }
 
 func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite3", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	migrateLegacyFilename(path)
+	// DSN 必须带 file: 前缀，驱动才会解析 ?_pragma= 连接参数；
+	// 否则整串拼进文件名，Windows 下 ? 为非法字符直接报错，Linux 下 pragma 静默失效
+	db, err := sql.Open("sqlite3", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, err
 	}
@@ -29,6 +34,30 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// migrateLegacyFilename 历史版本 DSN 未带 file: 前缀，磁盘上的库文件名带 ?_pragma=... 后缀，
+// 启动时改回规范名（连同 -wal/-shm 旁路文件），避免旧数据被当成不存在而重新建库
+func migrateLegacyFilename(path string) {
+	if _, err := os.Stat(path); err == nil {
+		return
+	}
+	matches, _ := filepath.Glob(path + "?*")
+	for _, m := range matches {
+		dst := path
+		switch {
+		case strings.HasSuffix(m, "-wal"):
+			dst = path + "-wal"
+		case strings.HasSuffix(m, "-shm"):
+			dst = path + "-shm"
+		}
+		if m == dst {
+			continue
+		}
+		if _, err := os.Stat(dst); err != nil {
+			os.Rename(m, dst)
+		}
+	}
 }
 
 func (s *Store) Close() error { return s.db.Close() }
