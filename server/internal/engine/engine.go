@@ -496,6 +496,11 @@ func (e *Engine) certSubdomains(task *model.ScanTask, domain string, ips []strin
 	close(out)
 	newIPs := 0
 	for it := range out {
+		select {
+		case <-runCancel(e, task.ID):
+			return ips // 任务已取消：跳过剩余入库
+		default:
+		}
 		if it.ip != "" {
 			isNew, err := e.store.UpsertDomain(model.AssetDomain{
 				ProjectID: task.ProjectID, Domain: it.sub, CNAME: it.cname, IP: it.ip, Source: "crt-cert",

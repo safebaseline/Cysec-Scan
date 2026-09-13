@@ -416,12 +416,16 @@ func backupDB(dataDir, dbPath string) {
 	if err != nil {
 		return
 	}
-	if wal, err := os.ReadFile(dbPath + "-wal"); err == nil {
-		data = append(data, wal...) // 近似：WAL 未合并时一并附加（恢复时以主库为准尽力而为）
-		_ = wal
+	sizeKB := len(data) / 1024
+	// WAL 未合并时（如上次异常退出）：旁路文件单独存放为同名 -wal，
+	// 恢复时与主库一并拷回才是完整可用的库（直接拼接进主库会破坏 SQLite 文件格式）
+	if wal, err := os.ReadFile(dbPath + "-wal"); err == nil && len(wal) > 0 {
+		if werr := os.WriteFile(dst+"-wal", wal, 0o644); werr == nil {
+			sizeKB += len(wal) / 1024
+		}
 	}
 	if err := os.WriteFile(dst, data, 0o644); err == nil {
-		log.Printf("[备份] 数据库已备份至 %s (%d KB)", dst, len(data)/1024)
+		log.Printf("[备份] 数据库已备份至 %s (%d KB)", dst, sizeKB)
 	}
 	// 清理旧备份，保留最近 7 份
 	entries, _ := os.ReadDir(bkDir)
@@ -431,7 +435,8 @@ func backupDB(dataDir, dbPath string) {
 	}
 	var list []finfo
 	for _, e := range entries {
-		if !e.IsDir() && strings.HasPrefix(e.Name(), "cysec-") {
+		// 仅按主库文件计数；-wal/-shm 旁路文件随对应主库一同清理
+		if !e.IsDir() && strings.HasPrefix(e.Name(), "cysec-") && strings.HasSuffix(e.Name(), ".db") {
 			if info, err := e.Info(); err == nil {
 				list = append(list, finfo{e.Name(), info.ModTime()})
 			}
@@ -442,6 +447,8 @@ func backupDB(dataDir, dbPath string) {
 	if len(list) > 7 {
 		for _, f := range list[7:] {
 			os.Remove(filepath.Join(bkDir, f.name))
+			os.Remove(filepath.Join(bkDir, f.name+"-wal"))
+			os.Remove(filepath.Join(bkDir, f.name+"-shm"))
 		}
 	}
 }
