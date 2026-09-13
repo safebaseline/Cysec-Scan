@@ -2,6 +2,7 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -343,73 +344,18 @@ func ensureConfig(path string) (*config.Config, error) {
 		}
 	}
 	// 裸二进制（无示例文件）回退内置默认模板
-	if err := os.WriteFile(path, []byte(defaultConfigYAML), 0o644); err != nil {
+	if err := os.WriteFile(path, exampleConfigYAML, 0o644); err != nil {
 		return nil, fmt.Errorf("生成默认配置失败: %w", err)
 	}
 	log.Printf("[初始化] 未检测到配置文件，已生成默认配置: %s", path)
 	return config.Load(path)
 }
 
-// defaultConfigYAML 默认配置模板
-const defaultConfigYAML = `# Cysec-Scan 配置（首次启动自动生成，可按需修改后重启生效）
-server:
-  host: 0.0.0.0
-  port: 8080
-
-# 出站请求 HTTP 头：User-Agent 为全局 UA，其余为漏洞扫描引擎附加头（规则自带头优先）
-headers:
-  User-Agent: "CysecScan/1.0 (authorized-scan)"
-
-database:
-  driver: sqlite3
-  path: data/cysec.db
-
-worker:
-  concurrency: 8
-
-auth:
-  bootstrap_admin_user: admin
-  bootstrap_admin_pass: admin123
-  token_ttl_hours: 72
-
-scan:
-  subdomain_brute: true       # 目标为域名时自动子域名爆破
-  subdomain_workers: 500
-  subdomain_wordlist: ""
-  timeout_seconds: 5
-  max_targets_per_task: 65536
-  top_ports: [21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 445, 993, 995, 1433, 1521, 2375, 3306, 3389, 5432, 5900, 6379, 7001, 8080, 8443, 8888, 9200, 11211, 27017]
-
-# 全局出站代理（http/socks5，支持用户名密码）；空间测绘引擎 API 始终直连
-proxy:
-  enable: false
-  type: http
-  host: 127.0.0.1
-  port: 7890
-  username: ""
-  password: ""
-
-# 空间测绘数据源（密钥建议在 Web 界面填写）
-mapping:
-  enabled: false
-  size: 100
-  interval_ms: 0      # 每引擎两次请求最小间隔毫秒（0=内置默认，防 429）
-  fofa_enable: false
-  fofa_key: ""
-  fofa_base_url: ""
-  quake_enable: false
-  quake_key: ""
-  quake_base_url: ""
-  shodan_enable: false
-  shodan_key: ""
-  shodan_base_url: ""
-  zerozone_enable: false
-  zerozone_key_id: ""
-  zerozone_base_url: ""
-  zoomeye_enable: false
-  zoomeye_key: ""
-  zoomeye_base_url: ""
-`
+// exampleConfigYAML 内置默认配置模板：与仓库根目录 configs/config.example.yaml 内容一致，
+// 经 go:embed 嵌入二进制；config_template_test.go 中的防漂移测试保证两份内容同步。
+//
+//go:embed config.example.yaml
+var exampleConfigYAML []byte
 
 // backupDB 启动时备份数据库文件（存在才备份），保留最近 keepN 份
 func backupDB(dataDir, dbPath string) {
