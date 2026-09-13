@@ -9,6 +9,7 @@ configs/config.yaml
 
 # 构建产物
 dist/
+*.exe
 server/webdist/
 web/dist/
 server/cmd/cysec/webdist/*
