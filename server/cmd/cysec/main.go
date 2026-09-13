@@ -334,6 +334,15 @@ func ensureConfig(path string) (*config.Config, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("创建配置目录失败: %w", err)
 	}
+	// 优先复制同目录的 config.example.yaml（发布包内置示例，即默认配置内容）
+	example := filepath.Join(filepath.Dir(path), "config.example.yaml")
+	if data, err := os.ReadFile(example); err == nil && len(data) > 0 {
+		if werr := os.WriteFile(path, data, 0o644); werr == nil {
+			log.Printf("[初始化] 未检测到配置文件，已从示例模板生成: %s", path)
+			return config.Load(path)
+		}
+	}
+	// 裸二进制（无示例文件）回退内置默认模板
 	if err := os.WriteFile(path, []byte(defaultConfigYAML), 0o644); err != nil {
 		return nil, fmt.Errorf("生成默认配置失败: %w", err)
 	}

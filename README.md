@@ -86,7 +86,7 @@ make build
 ./dist/cysec -config configs/config.yaml
 ```
 
-程序启动时自动初始化：`config.yaml` 不存在则生成默认配置；数据库文件不存在则自动建库建表；
+程序启动时自动初始化：`config.yaml` 不存在则复制同目录 `config.example.yaml` 生成（无示例文件时用内置模板）；数据库文件不存在则自动建库建表；
 每次启动自动备份数据库至 `data/backups/`（保留最近 7 份）。
 
 访问 http://127.0.0.1:8080 ，默认账号 `admin / admin123`（首次登录后请修改配置并重启）。
