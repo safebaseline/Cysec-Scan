@@ -54,15 +54,13 @@ func NormalizeAutoTime(s string) string {
 	return fmt.Sprintf("%02d:%02d", h, m)
 }
 
-// DefaultSourceConfig 预置源：官方模板库启用；社区源示例默认停用
+// DefaultSourceConfig 模板源默认为空，由用户在界面自行添加
 func DefaultSourceConfig() SourceConfig {
 	return SourceConfig{
 		AutoTime:  "02:00",
 		Mirror:    DefaultMirror,
 		AutoDaily: false,
-		Sources: []Source{
-			{URL: "https://github.com/projectdiscovery/nuclei-templates", Enabled: true},
-		},
+		Sources:   []Source{},
 	}
 }
 
