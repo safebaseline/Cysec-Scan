@@ -123,7 +123,7 @@ func buildUserPrompt(v VulnContext) string {
 	return b.String()
 }
 
-// callLLM 调用 OpenAI 兼容 API
+// callLLM 调用 OpenAI 兼容 API（直连，不走全局出站代理）
 func callLLM(cfg Config, systemPrompt, userPrompt string) (string, error) {
 	reqBody := map[string]any{
 		"model": cfg.Model,
@@ -136,49 +136,80 @@ func callLLM(cfg Config, systemPrompt, userPrompt string) (string, error) {
 	}
 	data, _ := json.Marshal(reqBody)
 
-	// 确保 base_url 以 /chat/completions 结尾
-	endpoint := strings.TrimRight(cfg.BaseURL, "/")
-	if !strings.HasSuffix(endpoint, "/chat/completions") {
-		endpoint += "/chat/completions"
-	}
-
-	req, err := http.NewRequest("POST", endpoint, bytes.NewReader(data))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-
 	timeout := time.Duration(cfg.TimeoutSec) * time.Second
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
 	client := &http.Client{Timeout: timeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("AI API 调用失败: %v", err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("AI API HTTP %d: %s", resp.StatusCode, truncate(string(body), 200))
-	}
 
-	// 解析 OpenAI 兼容响应
-	var result struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
+	var lastErr error
+	for _, base := range apiBases(cfg.BaseURL) {
+		req, err := http.NewRequest("POST", base+"/chat/completions", bytes.NewReader(data))
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("AI API 调用失败: %v", err)
+			continue // 网络失败换下一候选路径（补 /v1 与原样两种前缀）
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode == 404 {
+			lastErr = fmt.Errorf("AI API HTTP 404: %s", truncate(string(body), 200))
+			continue // 404 多为 base_url 版本段不符，尝试另一候选
+		}
+		if resp.StatusCode != 200 {
+			return "", fmt.Errorf("AI API HTTP %d: %s", resp.StatusCode, truncate(string(body), 200))
+		}
+
+		// 解析 OpenAI 兼容响应
+		var result struct {
+			Choices []struct {
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil {
+			return "", fmt.Errorf("AI 响应解析失败: %v", err)
+		}
+		if len(result.Choices) == 0 {
+			return "", fmt.Errorf("AI 返回空结果")
+		}
+		return result.Choices[0].Message.Content, nil
 	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("AI 响应解析失败: %v", err)
+	return "", lastErr
+}
+
+// apiBases 返回候选 API 前缀：base_url 未带版本段（/v1、/v2…）时优先补 /v1，其次原样；
+// 兼容 https://api.openai.com 与 https://api.openai.com/v1 两种写法（404/网络失败时依次回退）
+func apiBases(raw string) []string {
+	b := strings.TrimRight(strings.TrimSpace(raw), "/")
+	b = strings.TrimSuffix(b, "/chat/completions") // 兼容误把完整端点当 base_url 的写法
+	if hasVersionSuffix(b) {
+		return []string{b}
 	}
-	if len(result.Choices) == 0 {
-		return "", fmt.Errorf("AI 返回空结果")
+	return []string{b + "/v1", b}
+}
+
+func hasVersionSuffix(b string) bool {
+	i := strings.LastIndex(b, "/")
+	if i < 0 || i == len(b)-1 {
+		return false
 	}
-	return result.Choices[0].Message.Content, nil
+	seg := b[i+1:]
+	if len(seg) < 2 || seg[0] != 'v' {
+		return false
+	}
+	for _, c := range seg[1:] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // parseVerdict 从 AI 回复中提取 JSON
@@ -209,40 +240,49 @@ func truncate(s string, n int) string {
 	return s[:n] + "..."
 }
 
-// ListModels 从 OpenAI 兼容 API 获取可用模型列表
+// ListModels 从 OpenAI 兼容 API 获取可用模型列表（直连，不走全局出站代理；
+// base_url 未带 /v1 时自动补全，404/网络失败回退另一候选路径）
 func ListModels(cfg Config) ([]string, error) {
 	if cfg.BaseURL == "" || cfg.APIKey == "" {
 		return nil, fmt.Errorf("需要先填写 API 地址和 API Key")
 	}
-	endpoint := strings.TrimRight(cfg.BaseURL, "/") + "/models"
-	req, err := http.NewRequest("GET", endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("请求失败: %v", err)
+	var lastErr error
+	for _, base := range apiBases(cfg.BaseURL) {
+		req, err := http.NewRequest("GET", base+"/models", nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("请求失败: %v", err)
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode == 404 {
+			lastErr = fmt.Errorf("HTTP 404: %s", truncate(string(body), 200))
+			continue // 版本段不符，尝试另一候选
+		}
+		if resp.StatusCode != 200 {
+			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(body), 200))
+		}
+		var result struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil {
+			return nil, fmt.Errorf("解析失败: %v", err)
+		}
+		models := []string{}
+		for _, m := range result.Data {
+			models = append(models, m.ID)
+		}
+		return models, nil
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(body), 200))
-	}
-	var result struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("解析失败: %v", err)
-	}
-	models := []string{}
-	for _, m := range result.Data {
-		models = append(models, m.ID)
-	}
-	return models, nil
+	return nil, lastErr
 }
 
 // ShouldAutoAnalyze 判断漏洞是否满足自动研判条件
