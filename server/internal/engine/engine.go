@@ -29,10 +29,11 @@ type Engine struct {
 	store *store.Store
 	cfg   *config.Config
 
-	mu       sync.Mutex
-	running  map[int64]*taskRun // taskID -> 运行状态
-	queue    chan int64
-	stopPoll chan struct{}
+	mu            sync.Mutex
+	running       map[int64]*taskRun // taskID -> 运行状态
+	queue         chan int64
+	stopPoll      chan struct{}
+	autoScanQueue chan autoScanJob // 新增 Web 资产实时漏洞扫描队列（nil 表示未启用）
 }
 
 type taskRun struct {
@@ -51,6 +52,7 @@ func New(st *store.Store, cfg *config.Config) *Engine {
 	}
 	go e.pollLoop()
 	go e.monitorLoop()
+	e.startAutoScan()
 	return e
 }
 
@@ -265,23 +267,8 @@ func (e *Engine) Execute(taskID int64) {
 	// 补充探测（覆盖非常用端口上的 vhost 站点；80/443 已由 probeDomainWebs 默认探测覆盖）
 	e.probeDomainPortWebs(task, webDomains)
 
-	// 资产监控：周期任务对本轮新增的 Web 资产默认执行漏洞扫描（即使任务是快速模式；
-	// 白名单资产仍会被跳过）
-	if task.ScanInterval != "" {
-		newWebs := e.store.NewWebsSince(task.ID, runStart)
-		if len(newWebs) > 0 {
-			e.store.LogTask(task.ID, "info", fmt.Sprintf("本轮新增 %d 个 Web 资产，默认执行漏洞扫描", len(newWebs)))
-			force := *task // 以标准模式语义执行风险检测与规则，绕过快速模式门控
-			force.Mode = "standard"
-			for _, u := range newWebs {
-				select {
-				case <-runCancel(e, task.ID):
-				default:
-				}
-				e.detectWeb(&force, u, "", task.TimeoutSec)
-			}
-		}
-	}
+	// 注：新增 Web 资产的默认漏洞扫描已由实时扫描器（autoscan）承担——
+	// 快速模式任务在 detectWeb 发现新资产时即提交异步扫描，覆盖全部来源，无需任务末补扫
 
 	// AI 自动研判：在所有检测完成、漏洞入库后执行
 	e.autoAIAnalyze(task)
@@ -389,6 +376,10 @@ func (e *Engine) detectWeb(task *model.ScanTask, webURL, ip string, timeoutSec i
 	}
 	if isNew {
 		e.store.AddChange(model.AssetChange{ProjectID: task.ProjectID, TaskID: task.ID, AssetType: "web", Asset: w.URL, Change: "add", Detail: w.Title})
+		// 快速模式不内联扫描：新增 Web 资产交实时扫描器异步执行（标准/深度模式已内联，不重复提交）
+		if task.Mode == "quick" {
+			e.SubmitAutoScan(task.ProjectID, w.URL)
+		}
 	}
 
 	// 技术指纹

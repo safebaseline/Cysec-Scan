@@ -71,6 +71,10 @@ func Import(st *store.Store, projectID, taskID int64, recs []Record) (newIPs, ne
 				if isNew {
 					newWebs++
 					st.AddChange(model.AssetChange{ProjectID: projectID, TaskID: taskID, AssetType: "web", Asset: r.URL, Change: "add", Detail: r.Title})
+					// 测绘导入的新增 Web 资产交实时漏洞扫描器异步执行
+					if newWebHandler != nil {
+						newWebHandler(projectID, r.URL)
+					}
 				}
 				st.UpsertURL(model.AssetURL{ProjectID: projectID, WebID: webID, URL: r.URL, Source: r.Provider})
 			}
@@ -159,3 +163,10 @@ func schemeOf(u string) string {
 	}
 	return "http"
 }
+
+// newWebHandler 新增 Web 资产回调：由 main 注入引擎的实时漏洞扫描入口
+// （mapper 不能直接依赖 engine——engine 已依赖 mapper，反向会成环）
+var newWebHandler func(projectID int64, url string)
+
+// SetNewWebHandler 注册新增 Web 资产回调（传入 nil 表示停用）
+func SetNewWebHandler(fn func(projectID int64, url string)) { newWebHandler = fn }

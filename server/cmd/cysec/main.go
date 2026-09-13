@@ -125,6 +125,9 @@ func main() {
 
 	e := engine.New(st, cfg)
 
+	// 测绘导入产生的新增 Web 资产 → 实时漏洞扫描（与任务发现/手动导入同一入口）
+	mapper.SetNewWebHandler(func(projectID int64, url string) { e.SubmitAutoScan(projectID, url) })
+
 	// 模板源每日自动更新（学习 nuclei-poc-main/.github/workflows/daily-run.yml）
 	vulnrule.SetSourceConfigProvider(func() vulnrule.SourceConfig {
 		c := vulnrule.DefaultSourceConfig()

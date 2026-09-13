@@ -48,6 +48,7 @@ type Scan struct {
 	SubdomainWorkers    int      `yaml:"subdomain_workers"`
 	SubdomainWordlist   string   `yaml:"subdomain_wordlist"`   // 可选：额外字典文件路径
 	SubdomainCertQuery  bool     `yaml:"subdomain_cert_query"` // 证书透明度（crt.name）被动收集，与爆破互补
+	WebAutoScan         bool     `yaml:"web_autoscan"`         // 新增 Web 资产实时漏洞扫描（全部来源）
 	TimeoutSeconds      int      `yaml:"timeout_seconds"`
 	MaxTargetsPerTask   int      `yaml:"max_targets_per_task"`
 	AuthorizedCIDRs     []string `yaml:"authorized_cidrs"` // 空表示不额外限制（仍限定任务目标范围内）
@@ -67,6 +68,7 @@ func Default() *Config {
 			SubdomainBrute:     true,
 			SubdomainWorkers:   500,
 			SubdomainCertQuery: true,
+			WebAutoScan:        true,
 			TimeoutSeconds:     5,
 			MaxTargetsPerTask: 65536,
 			TopPorts: []int{

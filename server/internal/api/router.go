@@ -268,7 +268,11 @@ func (api *API) importAssets(c *gin.Context) {
 		}
 	}
 	for _, u := range urls {
-		api.store.UpsertURL(model.AssetURL{ProjectID: req.ProjectID, URL: u, Method: "GET", Source: "import"})
+		isNew, _ := api.store.UpsertURL(model.AssetURL{ProjectID: req.ProjectID, URL: u, Method: "GET", Source: "import"})
+		// 新导入的 URL 交实时漏洞扫描器：探测建 Web 资产 + 风险检测 + 规则库
+		if isNew {
+			api.engine.SubmitAutoScan(req.ProjectID, u)
+		}
 	}
 	api.store.SystemLog(model.SystemLog{Username: c.GetString("username"), Action: "import_assets", Object: fmt.Sprintf("project=%d", req.ProjectID), ClientIP: c.ClientIP(), Result: "success"})
 	c.JSON(200, gin.H{

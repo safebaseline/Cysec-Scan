@@ -688,6 +688,9 @@ func (s *Store) DeleteTask(id int64) error {
 }
 
 func (s *Store) LogTask(taskID int64, level, msg string) {
+	if taskID <= 0 {
+		return // 实时扫描等合成任务不落任务日志
+	}
 	s.db.Exec(`INSERT INTO scan_logs(task_id,level,message) VALUES(?,?,?)`, taskID, level, msg)
 }
 
