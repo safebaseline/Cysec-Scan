@@ -474,8 +474,50 @@ func (s *Store) UpdateIPScore(projectID int64, ip string, score int) error {
 	return err
 }
 
-func (s *Store) UpsertDomain(d model.AssetDomain) (bool, error) {
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO asset_domains(project_id,domain,cname,ip,source) VALUES(?,?,?,?,?)`,
+// DomainIPMap 批量查询域名当前记录的解析 IP（域名+端口拼接探测用）
+func (s *Store) DomainIPMap(projectID int64, domains []string) map[string]string {
+	out := map[string]string{}
+	if len(domains) == 0 {
+		return out
+	}
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(domains)), ",")
+	args := make([]any, 0, len(domains)+1)
+	args = append(args, projectID)
+	for _, d := range domains {
+		args = append(args, d)
+	}
+	rows, err := s.db.Query(`SELECT domain, ip FROM asset_domains WHERE project_id=? AND domain IN (`+ph+`)`, args...)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var d, ip string
+		if rows.Scan(&d, &ip) == nil && ip != "" {
+			out[d] = ip
+		}
+	}
+	return out
+}
+
+// OpenPortServices 返回某 IP 全部开放端口的（端口, 服务）列表
+func (s *Store) OpenPortServices(projectID int64, ip string) []model.AssetPort {
+	out := []model.AssetPort{}
+	rows, err := s.db.Query(`SELECT port, service FROM asset_ports WHERE project_id=? AND ip=? AND state='open'`, projectID, ip)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p model.AssetPort
+		if rows.Scan(&p.Port, &p.Service) == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func (s *Store) UpsertDomain(d model.AssetDomain) (bool, error) {	res, err := s.db.Exec(`INSERT OR IGNORE INTO asset_domains(project_id,domain,cname,ip,source) VALUES(?,?,?,?,?)`,
 		d.ProjectID, d.Domain, d.CNAME, d.IP, d.Source)
 	if err != nil {
 		return false, err

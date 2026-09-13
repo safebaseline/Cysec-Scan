@@ -15,6 +15,7 @@ import (
 	"cysec/internal/config"
 	"cysec/internal/mapper"
 	"cysec/internal/model"
+	"cysec/internal/netproxy"
 	"cysec/internal/plugins"
 	"cysec/internal/store"
 	"cysec/internal/subdomain"
@@ -148,6 +149,10 @@ func (e *Engine) Execute(taskID int64) {
 	now := runStart
 	e.store.UpdateTask(taskID, map[string]any{"status": "running", "started_at": now})
 	e.store.LogTask(taskID, "info", "任务开始执行，模式="+task.Mode)
+	if netproxy.Enabled() {
+		// SOCKS/HTTP 代理对任意目标通常直接返回连接成功，端口开放判定会全面虚高
+		e.store.LogTask(taskID, "info", "出站代理已启用：端口扫描经代理执行时开放端口结果可能虚高，建议关闭代理后复扫")
+	}
 
 	// 目标解析（授权范围）
 	ips, domains, urls, err := ParseTargets(task.Targets, task.TargetType, e.cfg.Scan.MaxTargetsPerTask)
@@ -256,6 +261,10 @@ func (e *Engine) Execute(taskID int64) {
 		}(ip)
 	}
 	wg.Wait()
+
+	// 子域名+端口拼接探测：域名按其解析 IP 本轮发现的开放 Web 端口拼 http(s)://域名:端口
+	// 补充探测（覆盖非常用端口上的 vhost 站点；80/443 已由 probeDomainWebs 默认探测覆盖）
+	e.probeDomainPortWebs(task, webDomains)
 
 	// 资产监控：周期任务对本轮新增的 Web 资产默认执行漏洞扫描（即使任务是快速模式；
 	// 白名单资产仍会被跳过）
@@ -608,6 +617,107 @@ func (e *Engine) probeDomainWebs(task *model.ScanTask, names []string) {
 	wg.Wait()
 	e.store.LogTask(task.ID, "info", fmt.Sprintf("域名 Web 探测完成：%d 个域名（含任务域名与收集子域），发现 %d 个存活 Web 站点",
 		len(list), found))
+}
+
+// probeDomainPortWebs 子域名+端口拼接探测：对每个域名按其解析 IP 上发现的开放 Web 端口，
+// 拼 http(s)://域名:端口 探测为 Web 资产。覆盖非常用端口（如 :8080/:8443）上的 vhost 站点——
+// IP 视角能看到端口开放，但按域名（Host 头）访问才呈现真实站点。80/443 由 probeDomainWebs 默认探测覆盖，此处跳过。
+func (e *Engine) probeDomainPortWebs(task *model.ScanTask, names []string) {
+	seen := map[string]bool{}
+	list := make([]string, 0, len(names))
+	for _, n := range names {
+		if n = strings.ToLower(strings.Trim(n, ".")); n != "" && !seen[n] {
+			seen[n] = true
+			list = append(list, n)
+		}
+	}
+	if len(list) == 0 {
+		return
+	}
+	ipMap := e.store.DomainIPMap(task.ProjectID, list)
+	type job struct {
+		name string
+		port int
+		https bool
+	}
+	jobs := []job{}
+	jobSeen := map[string]bool{}
+	for _, n := range list {
+		ip := ipMap[n]
+		if ip == "" {
+			continue // 未解析到 IP：无从关联端口
+		}
+		for _, pr := range e.store.OpenPortServices(task.ProjectID, ip) {
+			if pr.Port == 80 || pr.Port == 443 {
+				continue
+			}
+			if !isWebPort(pr.Port, pr.Service) {
+				continue
+			}
+			key := fmt.Sprintf("%s:%d", n, pr.Port)
+			if jobSeen[key] {
+				continue
+			}
+			jobSeen[key] = true
+			jobs = append(jobs, job{name: n, port: pr.Port, https: pr.Port == 8443 || strings.Contains(strings.ToUpper(pr.Service), "HTTPS")})
+		}
+	}
+	if len(jobs) == 0 {
+		return
+	}
+	workers := e.cfg.Worker.Concurrency
+	if workers <= 0 {
+		workers = 8
+	}
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	found := 0
+	timeout := maxInt(task.TimeoutSec, 3)
+	for _, j := range jobs {
+		select {
+		case <-runCancel(e, task.ID):
+			wg.Wait()
+			e.store.LogTask(task.ID, "info", "域名+端口拼接探测：任务已取消")
+			return
+		default:
+		}
+		wg.Add(1)
+		go func(j job) {
+			defer wg.Done()
+			select {
+			case <-runCancel(e, task.ID):
+				return
+			case sem <- struct{}{}:
+			}
+			defer func() { <-sem }()
+			u := "http://" + joinHostPort(j.name, j.port)
+			if j.https {
+				u = "https://" + joinHostPort(j.name, j.port)
+			}
+			if newWebProber(timeout)(u, "") == nil {
+				return // 不存活：不作为资产入库
+			}
+			mu.Lock()
+			found++
+			mu.Unlock()
+			e.detectWeb(task, u, "", timeout)
+		}(j)
+	}
+	wg.Wait()
+	e.store.LogTask(task.ID, "info", fmt.Sprintf("域名+端口拼接探测完成：%d 个组合，发现 %d 个存活 Web 站点", len(jobs), found))
+}
+
+// isWebPort 判断端口是否值得按 Web 探测：服务标识含 HTTP，或属于常见 Web 备用端口
+func isWebPort(port int, service string) bool {
+	if strings.Contains(strings.ToUpper(service), "HTTP") {
+		return true
+	}
+	switch port {
+	case 8000, 8888, 9000, 9090, 7001, 5000, 3000, 10000:
+		return true
+	}
+	return false
 }
 
 // autoAIAnalyze 对本次任务新检出的漏洞批量 AI 研判并自动标记
