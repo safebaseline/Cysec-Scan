@@ -22,10 +22,9 @@ func init() {
 	plugins.RegisterResolver(&goResolver{})
 	plugins.RegisterMapper(&localMapper{})
 	plugins.RegisterFingerprinter(&ruleFingerprinter{})
-	plugins.RegisterRiskScanner(&headerRiskScanner{})
+	// 漏洞检测链 = 漏洞规则库（nuclei/xray/afrog PoC）+ 敏感路径检测 + WIH JS 敏感信息检测。
+	// 内置的 HTTP 安全头 / SSL/TLS / 组件版本检测已按需求移除，不再注册。
 	plugins.RegisterRiskScanner(&leakRiskScanner{})
-	plugins.RegisterRiskScanner(&tlsRiskScanner{})
-	plugins.RegisterRiskScanner(&componentRiskScanner{})
 	plugins.RegisterRiskScanner(&wihRiskScanner{})
 }
 
