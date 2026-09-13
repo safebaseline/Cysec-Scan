@@ -69,6 +69,12 @@
 - Web 管理界面（React + TypeScript，全中文），列表统一分页（每页 20 条）
 - Token 鉴权 + RBAC（admin / auditor / viewer），操作审计日志
 - 插件化架构：发现 / 测绘 / 扫描 / 指纹 / 风险全部为插件，可注册扩展
+### 页面截图
+<img width="1477" height="1025" alt="image" src="https://github.com/user-attachments/assets/d2ee4993-d021-4b7c-9e1e-90ce10b446f3" />
+<img width="1491" height="1032" alt="image" src="https://github.com/user-attachments/assets/743d1cf9-908a-4966-963b-80c1af8c6764" />
+<img width="1489" height="1025" alt="image" src="https://github.com/user-attachments/assets/15ab794c-f99c-4547-8da5-7c2493f7cf4e" />
+<img width="1483" height="1046" alt="image" src="https://github.com/user-attachments/assets/78d5d12d-f5a5-4564-abdc-6371fee50cdd" />
+<img width="1468" height="1036" alt="image" src="https://github.com/user-attachments/assets/ed16f3ff-dbe1-479e-9e75-a37280e357be" />
 
 ## 快速开始
 
