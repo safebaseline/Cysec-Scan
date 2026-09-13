@@ -77,10 +77,10 @@ scan:
 server:
     host: 0.0.0.0
     port: 8080
-user_agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.7151.120 Safari/537.36
-# 漏洞扫描引擎出站请求附加的 HTTP 头（如认证 Cookie / 自定义 UA；规则 YAML 自带的 headers 优先）
-# headers:
-#     Cookie: "session=xxx"
-#     X-Scan-Token: "authorized"
+# 出站请求 HTTP 头：User-Agent 为全局 UA；其余为漏洞扫描引擎附加头（规则 YAML 自带的 headers 优先）
+headers:
+    User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.7151.120 Safari/537.36
+    # Cookie: "session=xxx"
+    # X-Scan-Token: "authorized"
 worker:
     concurrency: 8

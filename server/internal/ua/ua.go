@@ -36,12 +36,17 @@ var (
 	extraHdr = map[string]string{}
 )
 
-// SetHeaders 设置全局附加请求头（键做规范化，空键/空值忽略）
+// SetHeaders 设置全局附加请求头（键做规范化，空键/空值忽略）。
+// User-Agent 特殊处理：作为全局 UA 生效（ua.Get 的所有使用点一致），不重复存入附加头。
 func SetHeaders(h map[string]string) {
 	clean := make(map[string]string, len(h))
 	for k, v := range h {
 		ck := textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(k))
 		if ck == "" || strings.TrimSpace(v) == "" {
+			continue
+		}
+		if ck == "User-Agent" {
+			Set(v)
 			continue
 		}
 		clean[ck] = v

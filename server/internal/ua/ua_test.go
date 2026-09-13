@@ -62,3 +62,23 @@ func TestSetHeadersApply(t *testing.T) {
 		t.Errorf("清空后不应携带自定义头")
 	}
 }
+
+func TestHeadersUserAgent(t *testing.T) {
+	origUA := Get()
+	defer Set(origUA)
+	SetHeaders(map[string]string{
+		"User-Agent": "TestUA/9.9",
+		"X-Extra":    "1",
+	})
+	if Get() != "TestUA/9.9" {
+		t.Fatalf("headers 中的 User-Agent 应成为全局 UA: %q", Get())
+	}
+	req, _ := http.NewRequest("GET", "http://example.com/", nil)
+	Apply(req)
+	if req.Header.Get("User-Agent") != "TestUA/9.9" {
+		t.Errorf("Apply 应使用全局 UA")
+	}
+	if req.Header.Get("X-Extra") != "1" {
+		t.Errorf("其余附加头应保留")
+	}
+}

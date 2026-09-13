@@ -37,8 +37,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("加载配置失败: %v", err)
 	}
-	ua.Set(cfg.UserAgent)
-	ua.SetHeaders(cfg.Headers) // 漏洞扫描引擎出站请求附加的 HTTP 头（config.yaml headers 段）
+	if cfg.UserAgent != "" {
+		ua.Set(cfg.UserAgent) // 兼容旧版独立 user_agent 字段；headers 中的 User-Agent 优先生效
+	}
+	ua.SetHeaders(cfg.Headers) // config.yaml headers 段：User-Agent 为全局 UA，其余为漏洞扫描引擎附加头
 	if err := os.MkdirAll(filepath.Dir(cfg.Database.Path), 0o755); err != nil {
 		log.Fatalf("创建数据目录失败: %v", err)
 	}
@@ -345,8 +347,9 @@ server:
   host: 0.0.0.0
   port: 8080
 
-# 所有出站请求统一使用的 User-Agent
-user_agent: "CysecScan/1.0 (authorized-scan)"
+# 出站请求 HTTP 头：User-Agent 为全局 UA，其余为漏洞扫描引擎附加头（规则自带头优先）
+headers:
+  User-Agent: "CysecScan/1.0 (authorized-scan)"
 
 database:
   driver: sqlite3

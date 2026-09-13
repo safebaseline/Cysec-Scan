@@ -115,7 +115,7 @@ make build
 | `worker` | 任务并发 |
 | `scan` | 超时、常用端口表（top_ports）、单目标最大端口数、子域名爆破开关/并发/字典 |
 | `proxy` | 全局出站代理（http/socks5 + 认证） |
-| `user_agent` | 全局出站 User-Agent |
+| `headers` | 出站请求 HTTP 头（User-Agent 为全局 UA，其余为扫描引擎附加头） |
 | `mapping` | 空间测绘数据源密钥与开关 |
 
 ## 目录结构

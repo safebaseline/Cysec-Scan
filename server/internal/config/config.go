@@ -10,15 +10,15 @@ import (
 )
 
 type Config struct {
-	Server    Server           `yaml:"server"`
-	UserAgent string           `yaml:"user_agent"`
-	Headers   map[string]string `yaml:"headers"` // 漏洞扫描引擎出站请求附加的 HTTP 头（规则自带头优先）
-	Database  Database         `yaml:"database"`
-	Worker    Worker           `yaml:"worker"`
-	Auth      Auth             `yaml:"auth"`
-	Scan      Scan             `yaml:"scan"`
-	Proxy     Proxy            `yaml:"proxy"`
-	Mapping   mapper.Config    `yaml:"mapping"`
+	Server    Server            `yaml:"server"`
+	UserAgent string            `yaml:"user_agent"` // 已废弃：兼容旧配置，headers 中的 User-Agent 优先
+	Headers   map[string]string `yaml:"headers"`   // 出站请求 HTTP 头：User-Agent 为全局 UA，其余为漏洞扫描引擎附加头
+	Database  Database          `yaml:"database"`
+	Worker    Worker            `yaml:"worker"`
+	Auth      Auth              `yaml:"auth"`
+	Scan      Scan              `yaml:"scan"`
+	Proxy     Proxy             `yaml:"proxy"`
+	Mapping   mapper.Config     `yaml:"mapping"`
 }
 
 // Proxy 全局出站代理（类型定义位于 netproxy，此处为别名）
