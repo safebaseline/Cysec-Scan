@@ -52,7 +52,7 @@ func VerifyAlive(recs []Record, timeoutSec int, concurrency int) ([]Record, int)
 func probeRecord(r Record, timeoutSec int) bool {
 	// 优先 TCP 探测 IP:Port
 	if r.IP != "" && r.Port > 0 {
-		conn, err := netproxy.DialTimeout("tcp", net.JoinHostPort(r.IP, fmt.Sprint(r.Port)), dur(timeoutSec))
+		conn, err := netproxy.DirectDialTimeout("tcp", net.JoinHostPort(r.IP, fmt.Sprint(r.Port)), dur(timeoutSec))
 		if err == nil {
 			conn.Close()
 			return true

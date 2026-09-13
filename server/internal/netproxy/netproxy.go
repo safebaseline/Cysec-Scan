@@ -1,5 +1,9 @@
-// Package netproxy 全局出站代理层：所有扫描出站流量统一经过此处。
+// Package netproxy 全局出站代理层：扫描出站流量统一经过此处分流。
 // 支持 http（含 CONNECT 隧道）与 socks5 代理，均支持用户名/密码认证。
+//
+// 流量分流策略：Web 资产探测与漏洞扫描引擎（HTTP 层）走全局代理；
+// TCP 层扫描（存活探测 / 端口扫描 / 服务识别）与空间测绘等数据源走直连——
+// SOCKS/HTTP 代理对任意目标通常直接返回连接成功，端口开放判定会全面虚高。
 package netproxy
 
 import (
@@ -123,7 +127,8 @@ func Test(target string, timeout time.Duration) (int64, error) {
 	return time.Since(start).Milliseconds(), nil
 }
 
-// DialTimeout 代理感知的 TCP 拨号：socks5 走 x/net/proxy，http 走 CONNECT 隧道，未启用直连
+// DialTimeout 代理感知的 TCP 拨号：socks5 走 x/net/proxy，http 走 CONNECT 隧道，未启用直连。
+// 供 Web 层探测与漏洞扫描引擎使用；TCP 层扫描（存活/端口/服务识别）应使用 DirectDialTimeout。
 func DialTimeout(network, addr string, timeout time.Duration) (net.Conn, error) {
 	p := Current()
 	if !p.Enable || p.Type == "" || p.Type == "none" {
@@ -146,6 +151,13 @@ func DialTimeout(network, addr string, timeout time.Duration) (net.Conn, error) 
 		return httpConnect(p, addr, timeout)
 	}
 	return nil, fmt.Errorf("未知代理类型 %s", p.Type)
+}
+
+// DirectDialTimeout 强制直连的 TCP 拨号（忽略全局代理）：端口扫描/存活探测/服务识别专用，
+// 避免代理层对任意目标返回连接成功导致开放端口全面虚高
+func DirectDialTimeout(network, addr string, timeout time.Duration) (net.Conn, error) {
+	d := &net.Dialer{Timeout: timeout}
+	return d.DialContext(context.Background(), network, addr)
 }
 
 func authOf(p Proxy) *proxy.Auth {

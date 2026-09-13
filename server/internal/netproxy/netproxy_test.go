@@ -141,3 +141,27 @@ func TestProxyURLNoAuth(t *testing.T) {
 		t.Fatal("无认证时 auth 应为 nil")
 	}
 }
+
+// TestDirectDialTimeout 直连拨号在代理启用时也应直连成功（本地回环监听验证）
+func TestDirectDialTimeout(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skip("loopback listen unavailable")
+	}
+	defer ln.Close()
+	// 启用一个必然不可达的代理配置，验证 DirectDialTimeout 不受影响
+	if err := Configure(Proxy{Enable: true, Type: "socks5", Host: "127.0.0.1", Port: 1}); err != nil {
+		t.Fatal(err)
+	}
+	defer Configure(Proxy{Enable: false})
+	conn, err := DirectDialTimeout("tcp", ln.Addr().String(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("直连拨号失败: %v", err)
+	}
+	conn.Close()
+	// 对照：代理感知拨号此时应失败（代理不可达）
+	if c, err := DialTimeout("tcp", ln.Addr().String(), 2*time.Second); err == nil {
+		c.Close()
+		t.Fatalf("代理不可达时 DialTimeout 不应成功")
+	}
+}

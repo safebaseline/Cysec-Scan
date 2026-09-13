@@ -38,7 +38,7 @@ func (p *tcpProber) Name() string { return "tcp-prober" }
 func (p *tcpProber) Probe(ip string, timeoutSec int) plugins.ProbeResult {
 	for _, port := range []int{80, 443, 22, 445, 3389, 8080} {
 		start := time.Now()
-		conn, err := netproxy.DialTimeout("tcp", net.JoinHostPort(ip, fmt.Sprint(port)), time.Duration(timeoutSec)*time.Second)
+		conn, err := netproxy.DirectDialTimeout("tcp", net.JoinHostPort(ip, fmt.Sprint(port)), time.Duration(timeoutSec)*time.Second)
 		if err == nil {
 			conn.Close()
 			return plugins.ProbeResult{Alive: true, Method: fmt.Sprintf("tcp/%d", port), LatencyMs: time.Since(start).Milliseconds()}
@@ -64,7 +64,7 @@ func (s *connectScanner) Scan(ip string, ports []int, timeoutSec int) []plugins.
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			conn, err := netproxy.DialTimeout("tcp", net.JoinHostPort(ip, fmt.Sprint(port)), time.Duration(timeoutSec)*time.Second)
+			conn, err := netproxy.DirectDialTimeout("tcp", net.JoinHostPort(ip, fmt.Sprint(port)), time.Duration(timeoutSec)*time.Second)
 			if err == nil {
 				conn.Close()
 				out[i].open = true
@@ -109,7 +109,7 @@ func (b *bannerIdentifier) Identify(ip string, pr plugins.PortResult, timeoutSec
 	if svc, ok := portService[pr.Port]; ok && pr.Service == "" {
 		pr.Service = svc
 	}
-	conn, err := netproxy.DialTimeout("tcp", net.JoinHostPort(ip, fmt.Sprint(pr.Port)), time.Duration(timeoutSec)*time.Second)
+	conn, err := netproxy.DirectDialTimeout("tcp", net.JoinHostPort(ip, fmt.Sprint(pr.Port)), time.Duration(timeoutSec)*time.Second)
 	if err != nil {
 		return pr
 	}

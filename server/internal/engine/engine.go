@@ -150,8 +150,7 @@ func (e *Engine) Execute(taskID int64) {
 	e.store.UpdateTask(taskID, map[string]any{"status": "running", "started_at": now})
 	e.store.LogTask(taskID, "info", "任务开始执行，模式="+task.Mode)
 	if netproxy.Enabled() {
-		// SOCKS/HTTP 代理对任意目标通常直接返回连接成功，端口开放判定会全面虚高
-		e.store.LogTask(taskID, "info", "出站代理已启用：端口扫描经代理执行时开放端口结果可能虚高，建议关闭代理后复扫")
+		e.store.LogTask(taskID, "info", "全局代理已启用：Web 探测与漏洞扫描走代理，端口扫描/服务识别走直连")
 	}
 
 	// 目标解析（授权范围）
