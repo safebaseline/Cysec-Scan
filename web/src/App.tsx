@@ -518,6 +518,8 @@ function VulnRules() { const [data, setData] = useState<any>({ items: [], total:
       <div className="modal-head"><h3>{detail.rule_id}</h3><button onClick={() => setDetail(null)}>关闭</button></div><pre className="logs">{detail.raw}</pre></div></div>)}</div>); }
 
 const NAV = [['#', '仪表盘'], ['#assets', '资产管理'], ['#vulns', '漏洞风险'], ['#tasks', '扫描任务'], ['#monitor', '资产监控'], ['#import', '资产导入'], ['#changes', '变化监控'], ['#rules', '漏洞规则库'], ['#settings', '系统设置']];
+// 不依赖项目的全局页面：无项目时也可正常使用
+const GLOBAL_PAGES = ['#rules', '#settings'];
 
 export default function App() { const [logged, setLogged] = useState(!!getToken()); const [projects, setProjects] = useState<Project[]>([]);
   const [pid, setPid] = useState<number>(0); const [hash, setHash] = useState(window.location.hash || '#');
@@ -562,10 +564,10 @@ if (!logged) return <Login onOk={() => setLogged(true)} />;
           <a href="#login" onClick={() => { localStorage.removeItem('token'); setLogged(false); }}>退出</a>
         </nav>
       </header>
-    <main>{pid === 0 && <Card>请先创建项目</Card>}
+    <main>{pid === 0 && !GLOBAL_PAGES.includes(page) && <Card>请先创建项目</Card>}
       {pid > 0 && page === '#' && <Dashboard pid={pid} />}{pid > 0 && page === '#assets' && <Assets pid={pid} />}
       {pid > 0 && page === '#vulns' && <Vulns pid={pid} />}{pid > 0 && page === '#tasks' && <Tasks pid={pid} />}
       {pid > 0 && page === '#monitor' && <Monitor pid={pid} />}{pid > 0 && page === '#import' && <ImportPanel pid={pid} />}
-      {pid > 0 && page === '#changes' && <Changes pid={pid} />}{pid > 0 && page === '#rules' && <VulnRules />}
+      {pid > 0 && page === '#changes' && <Changes pid={pid} />}{page === '#rules' && <VulnRules />}
       {page === '#settings' && <Settings />}</main>
     <footer className="muted">仅用于已授权资产的安全检测</footer><AskDialog /></div>); }
