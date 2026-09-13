@@ -41,6 +41,7 @@ scan:
     subdomain_brute: true
     subdomain_wordlist: ""
     subdomain_workers: 500
+    subdomain_cert_query: true
     timeout_seconds: 5
     top_ports:
         - 21

@@ -192,6 +192,16 @@ func (e *Engine) Execute(taskID int64) {
 			ips = e.bruteSubdomains(task, d, ips)
 		}
 	}
+	// 证书透明度被动收集：不依赖字典，能发现历史子域（crt.name）
+	if e.cfg.Scan.SubdomainCertQuery {
+		for _, d := range domains {
+			select {
+			case <-runCancel(e, task.ID):
+			default:
+			}
+			ips = e.certSubdomains(task, d, ips)
+		}
+	}
 	for _, ip := range ips {
 		authorized[ip] = true
 	}
@@ -451,6 +461,72 @@ func (e *Engine) bruteSubdomains(task *model.ScanTask, domain string, ips []stri
 	}
 	e.store.LogTask(task.ID, "info", fmt.Sprintf("子域名爆破 %s：发现 %d 个子域名，新增 %d 个解析 IP",
 		domain, len(results), newIPs))
+	return ips
+}
+
+// certSubdomains 证书透明度（crt.name）被动收集子域名并入库；解析出的新 IP 纳入后续扫描
+func (e *Engine) certSubdomains(task *model.ScanTask, domain string, ips []string) []string {
+	subs := subdomain.CertQuery(domain, maxInt(task.TimeoutSec, 5))
+	if len(subs) == 0 {
+		e.store.LogTask(task.ID, "info", fmt.Sprintf("证书透明度收集 %s：未发现子域名", domain))
+		return ips
+	}
+	// 并发解析（32）：CT 记录可能已过期，解析失败仅入库域名不填 IP
+	type item struct{ sub, ip, cname string }
+	sem := make(chan struct{}, 32)
+	out := make(chan item, len(subs))
+	var wg sync.WaitGroup
+	for _, s := range subs {
+		wg.Add(1)
+		go func(s string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			it := item{sub: s}
+			for _, r := range plugins.AllResolvers() {
+				if v, cn, err := r.Resolve(s); err == nil && v != "" {
+					it.ip, it.cname = v, cn
+					break
+				}
+			}
+			out <- it
+		}(s)
+	}
+	wg.Wait()
+	close(out)
+	newIPs := 0
+	for it := range out {
+		if it.ip != "" {
+			isNew, err := e.store.UpsertDomain(model.AssetDomain{
+				ProjectID: task.ProjectID, Domain: it.sub, CNAME: it.cname, IP: it.ip, Source: "crt-cert",
+			})
+			if err == nil && isNew {
+				e.store.AddChange(model.AssetChange{ProjectID: task.ProjectID, TaskID: task.ID, AssetType: "domain",
+					Asset: it.sub, Change: "add", Detail: "证书透明度(crt.name)发现 " + it.ip})
+			}
+			before := len(ips)
+			ips = appendIfNew(ips, it.ip)
+			if len(ips) > before {
+				newIPs++
+				isNewIP, _ := e.store.UpsertIP(model.AssetIP{ProjectID: task.ProjectID, IP: it.ip, Source: "crt-cert"})
+				if isNewIP {
+					e.store.AddChange(model.AssetChange{ProjectID: task.ProjectID, TaskID: task.ID, AssetType: "ip",
+						Asset: it.ip, Change: "add", Detail: "证书透明度子域解析"})
+				}
+			}
+		} else {
+			// 未解析到 IP：仅登记域名（INSERT OR IGNORE，避免空值覆盖已有 cname/ip）
+			if res, err := e.store.Exec(`INSERT OR IGNORE INTO asset_domains(project_id,domain,source) VALUES(?,?,?)`,
+				task.ProjectID, it.sub, "crt-cert"); err == nil {
+				if n, _ := res.RowsAffected(); n > 0 {
+					e.store.AddChange(model.AssetChange{ProjectID: task.ProjectID, TaskID: task.ID, AssetType: "domain",
+						Asset: it.sub, Change: "add", Detail: "证书透明度(crt.name)发现（未解析）"})
+				}
+			}
+		}
+	}
+	e.store.LogTask(task.ID, "info", fmt.Sprintf("证书透明度收集 %s：发现 %d 个子域名，新增 %d 个解析 IP",
+		domain, len(subs), newIPs))
 	return ips
 }
 

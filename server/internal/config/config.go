@@ -44,15 +44,16 @@ type Auth struct {
 }
 
 type Scan struct {
-	SubdomainBrute    bool     `yaml:"subdomain_brute"`
-	SubdomainWorkers  int      `yaml:"subdomain_workers"`
-	SubdomainWordlist string   `yaml:"subdomain_wordlist"` // 可选：额外字典文件路径
-	TimeoutSeconds    int      `yaml:"timeout_seconds"`
-	MaxTargetsPerTask int      `yaml:"max_targets_per_task"`
-	AuthorizedCIDRs   []string `yaml:"authorized_cidrs"` // 空表示不额外限制（仍限定任务目标范围内）
-	TopPorts          []int    `yaml:"top_ports"`
-	MaxPortPerTarget  int      `yaml:"max_ports_per_target"`
-	RiskCheckPaths    []string `yaml:"risk_check_paths"`
+	SubdomainBrute      bool     `yaml:"subdomain_brute"`
+	SubdomainWorkers    int      `yaml:"subdomain_workers"`
+	SubdomainWordlist   string   `yaml:"subdomain_wordlist"`   // 可选：额外字典文件路径
+	SubdomainCertQuery  bool     `yaml:"subdomain_cert_query"` // 证书透明度（crt.name）被动收集，与爆破互补
+	TimeoutSeconds      int      `yaml:"timeout_seconds"`
+	MaxTargetsPerTask   int      `yaml:"max_targets_per_task"`
+	AuthorizedCIDRs     []string `yaml:"authorized_cidrs"` // 空表示不额外限制（仍限定任务目标范围内）
+	TopPorts            []int    `yaml:"top_ports"`
+	MaxPortPerTarget    int      `yaml:"max_ports_per_target"`
+	RiskCheckPaths      []string `yaml:"risk_check_paths"`
 }
 
 func Default() *Config {
@@ -63,9 +64,10 @@ func Default() *Config {
 		Worker:    Worker{Concurrency: 8},
 		Auth:      Auth{BootstrapAdminUser: "admin", BootstrapAdminPass: "admin123", TokenTTLHours: 72},
 		Scan: Scan{
-			SubdomainBrute:    true,
-			SubdomainWorkers:  500,
-			TimeoutSeconds:    5,
+			SubdomainBrute:     true,
+			SubdomainWorkers:   500,
+			SubdomainCertQuery: true,
+			TimeoutSeconds:     5,
 			MaxTargetsPerTask: 65536,
 			TopPorts: []int{
 				21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 445,
