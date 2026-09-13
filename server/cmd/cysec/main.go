@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"cysec/internal/ai"
 	"cysec/internal/api"
 	"cysec/internal/auth"
 	"cysec/internal/config"
@@ -153,7 +154,7 @@ func main() {
 	os.MkdirAll(pocRoot, 0o755)
 	// 新增规则（POC 目录监控 或 模板源更新）→ 对全部资产执行新规则扫描
 	vulnrule.SetNewRulesHandler(func(rules []vulnrule.Rule) {
-		scanAllAssetsWithNewRules(st, rules)
+		scanAllAssetsWithNewRules(e, st, rules)
 	})
 	// 存量 Web 资产 URL 协议补全（TLS 探测，异步不阻塞启动）
 	go mapper.MigrateWebURLs(st.DB())
@@ -255,7 +256,7 @@ func dailyRuleUpdate(st *store.Store, cfg *config.Config) {
 }
 
 // scanAllAssetsWithNewRules 用新增规则对所有项目的 Web 资产执行漏洞扫描
-func scanAllAssetsWithNewRules(st *store.Store, rules []vulnrule.Rule) {
+func scanAllAssetsWithNewRules(e *engine.Engine, st *store.Store, rules []vulnrule.Rule) {
 	vulnrule.MarkScanState(true)
 	defer vulnrule.MarkScanState(false)
 	start := time.Now()
@@ -290,7 +291,7 @@ func scanAllAssetsWithNewRules(st *store.Store, rules []vulnrule.Rule) {
 				continue
 			}
 			matchedTotal++
-			isNew, _ := st.UpsertVuln(model.Vulnerability{
+			vid, isNew, _ := st.UpsertVuln(model.Vulnerability{
 				ProjectID:   w.ProjectID,
 				VulnID:      rules[i].RuleID,
 				Name:        rules[i].Name,
@@ -311,6 +312,12 @@ func scanAllAssetsWithNewRules(st *store.Store, rules []vulnrule.Rule) {
 					ProjectID: w.ProjectID, AssetType: "vuln",
 					Asset: rules[i].RuleID + "@" + w.URL, Change: "add",
 					Detail: "POC 目录新增规则检出: " + rules[i].Name,
+				})
+				// 实时 AI 研判：新增漏洞即入队
+				e.SubmitAIAnalyze(vid, ai.VulnContext{
+					VulnID: rules[i].RuleID, Name: rules[i].Name, Severity: rules[i].Severity,
+					Description: rules[i].Description, URL: w.URL, IP: w.IP, Port: w.Port,
+					Evidence: res.Evidence, Request: res.Request, Response: res.Response,
 				})
 			}
 		}

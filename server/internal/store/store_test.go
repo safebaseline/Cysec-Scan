@@ -35,18 +35,21 @@ func TestUpsertIPDedup(t *testing.T) {
 func TestUpsertVulnDedup(t *testing.T) {
 	s := openTest(t)
 	v := model.Vulnerability{ProjectID: 1, VulnID: "CYSEC-T-001", Name: "test", Severity: "high", IP: "1.2.3.4", Port: 80, URL: "http://1.2.3.4"}
-	isNew, err := s.UpsertVuln(v)
+	id, isNew, err := s.UpsertVuln(v)
+	if id <= 0 {
+		t.Fatalf("应返回库内 ID")
+	}
 	if err != nil || !isNew {
 		t.Fatalf("首次: %v %v", isNew, err)
 	}
-	isNew, err = s.UpsertVuln(v)
+	_, isNew, err = s.UpsertVuln(v)
 	if err != nil || isNew {
 		t.Fatalf("相同资产+端口+URL+漏洞ID 应去重: %v %v", isNew, err)
 	}
 	// 不同 URL 不去重
 	v2 := v
 	v2.URL = "http://1.2.3.4/x"
-	isNew, err = s.UpsertVuln(v2)
+	_, isNew, err = s.UpsertVuln(v2)
 	if err != nil || !isNew {
 		t.Fatalf("不同 URL 应视为新漏洞: %v %v", isNew, err)
 	}

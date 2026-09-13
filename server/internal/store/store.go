@@ -585,19 +585,27 @@ func (s *Store) UpsertFingerprint(f model.AssetFingerprint) error {
 }
 
 // UpsertVuln 漏洞去重: 资产+端口+URL+漏洞ID
-func (s *Store) UpsertVuln(v model.Vulnerability) (bool, error) {
+// UpsertVuln 漏洞统一入库去重（资产+端口+URL+漏洞ID），返回（库内 ID，是否新增）
+func (s *Store) UpsertVuln(v model.Vulnerability) (int64, bool, error) {
 	res, err := s.db.Exec(`INSERT OR IGNORE INTO vulnerabilities(project_id,vuln_id,name,severity,ip,domain,port,url,service,component,description,solution,evidence,request,response,scanner)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		v.ProjectID, v.VulnID, v.Name, v.Severity, v.IP, v.Domain, v.Port, v.URL, v.Service, v.Component, v.Description, v.Solution, v.Evidence, v.Request, v.Response, v.Scanner)
 	if err != nil {
-		return false, err
+		return 0, false, err
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
-		return true, nil
+		id, _ := res.LastInsertId()
+		return id, true, nil
 	}
 	_, err = s.db.Exec(`UPDATE vulnerabilities SET last_seen=CURRENT_TIMESTAMP, evidence=?, request=?, response=? WHERE project_id=? AND ip=? AND port=? AND url=? AND vuln_id=?`,
 		v.Evidence, v.Request, v.Response, v.ProjectID, v.IP, v.Port, v.URL, v.VulnID)
-	return false, err
+	if err != nil {
+		return 0, false, err
+	}
+	var id int64
+	s.db.QueryRow(`SELECT id FROM vulnerabilities WHERE project_id=? AND ip=? AND port=? AND url=? AND vuln_id=?`,
+		v.ProjectID, v.IP, v.Port, v.URL, v.VulnID).Scan(&id)
+	return id, false, nil
 }
 
 // GetVulnerability 漏洞详情（含请求/响应报文）

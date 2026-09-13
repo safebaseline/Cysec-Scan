@@ -34,6 +34,7 @@ type Engine struct {
 	queue         chan int64
 	stopPoll      chan struct{}
 	autoScanQueue chan autoScanJob // 新增 Web 资产实时漏洞扫描队列（nil 表示未启用）
+	aiQueue       chan aiAnalyzeJob // 新增漏洞实时 AI 研判队列（nil 表示未启用）
 }
 
 type taskRun struct {
@@ -53,6 +54,7 @@ func New(st *store.Store, cfg *config.Config) *Engine {
 	go e.pollLoop()
 	go e.monitorLoop()
 	e.startAutoScan()
+	e.startAIAnalyze()
 	return e
 }
 
@@ -270,8 +272,6 @@ func (e *Engine) Execute(taskID int64) {
 	// 注：新增 Web 资产的默认漏洞扫描已由实时扫描器（autoscan）承担——
 	// 快速模式任务在 detectWeb 发现新资产时即提交异步扫描，覆盖全部来源，无需任务末补扫
 
-	// AI 自动研判：在所有检测完成、漏洞入库后执行
-	e.autoAIAnalyze(task)
 
 	// 风险评分
 	e.scoreIPs(task.ProjectID, ips)
@@ -710,71 +710,6 @@ func isWebPort(port int, service string) bool {
 	return false
 }
 
-// autoAIAnalyze 对本次任务新检出的漏洞批量 AI 研判并自动标记
-func (e *Engine) autoAIAnalyze(task *model.ScanTask) {
-	cfg := ai.DefaultConfig()
-	if saved, _ := e.store.GetSetting("ai_config"); saved != "" {
-		json.Unmarshal([]byte(saved), &cfg)
-	}
-	if !cfg.Enabled || !cfg.AutoAnalyze {
-		return
-	}
-	e.store.LogTask(task.ID, "info", "AI 自动研判开始（最低等级: "+cfg.AutoMinSeverity+"）")
-
-	// 取本次任务新检出的漏洞（最近 60 分钟内）
-	vulns, err := e.store.QueryPage("vulnerabilities", task.ProjectID,
-		"first_seen >= ?", []any{time.Now().Add(-60 * time.Minute).Format("2006-01-02 15:04:05")}, "id", 200, 0)
-	if err != nil {
-		e.store.LogTask(task.ID, "warn", "AI 自动研判查询漏洞失败: "+err.Error())
-		return
-	}
-	if len(vulns) == 0 {
-		e.store.LogTask(task.ID, "info", "AI 自动研判：无新漏洞，跳过")
-		return
-	}
-	e.store.LogTask(task.ID, "info", fmt.Sprintf("AI 自动研判：发现 %d 个待分析漏洞", len(vulns)))
-
-	analyzed, skipped, failed := 0, 0, 0
-	for _, v := range vulns {
-		sev, _ := v["severity"].(string)
-		if !ai.ShouldAutoAnalyze(cfg, sev) {
-			skipped++
-			continue
-		}
-		vid, _ := v["vuln_id"].(string)
-		port, _ := v["port"].(int64)
-		verdict, err := ai.Analyze(cfg, ai.VulnContext{
-			VulnID:      vid,
-			Name:        str(v, "name"),
-			Severity:    sev,
-			Description: str(v, "description"),
-			URL:         str(v, "url"),
-			IP:          str(v, "ip"),
-			Port:        int(port),
-			Evidence:    str(v, "evidence"),
-			Request:     str(v, "request"),
-			Response:    str(v, "response"),
-		})
-		if err != nil {
-			failed++
-			e.store.LogTask(task.ID, "warn", fmt.Sprintf("AI 研判 %s 失败: %v", vid, err))
-			continue
-		}
-		id, _ := v["id"].(int64)
-		if err := e.store.SetVulnMark(id, verdict.Mark); err == nil {
-			analyzed++
-			e.store.LogTask(task.ID, "info", fmt.Sprintf("AI 研判 %s: %s（%s）%s", vid, verdict.Mark, verdict.Confidence, verdict.Reasoning))
-		}
-	}
-	e.store.LogTask(task.ID, "info", fmt.Sprintf("AI 自动研判完成：分析 %d / 跳过 %d / 失败 %d", analyzed, skipped, failed))
-}
-
-func str(m map[string]any, k string) string {
-	if v, ok := m[k].(string); ok {
-		return v
-	}
-	return ""
-}
 
 // spaceMapping 空间测绘：对所有 IP 与域名目标查询已启用的测绘数据源并导入结果，返回扩展后的 IP 列表
 func (e *Engine) spaceMapping(task *model.ScanTask, ips, domains []string) []string {
@@ -923,10 +858,16 @@ func (e *Engine) saveVuln(task *model.ScanTask, vr plugins.VulnResult, w *plugin
 		Component: vr.Component, Description: vr.Description, Solution: vr.Solution,
 		Evidence: vr.Evidence, Request: vr.Request, Response: vr.Response, Scanner: orDefaultStr(vr.Scanner, "builtin"),
 	}
-	isNew, err := e.store.UpsertVuln(v)
+	id, isNew, err := e.store.UpsertVuln(v)
 	if err == nil && isNew {
 		e.store.AddChange(model.AssetChange{ProjectID: task.ProjectID, TaskID: task.ID, AssetType: "vuln",
 			Asset: fmt.Sprintf("%s@%s", vr.VulnID, w.URL), Change: "add", Detail: vr.Name + " [" + vr.Severity + "]"})
+		// 实时 AI 研判：新增漏洞即入队异步分析（等级过滤与开关在出队时判断）
+		e.SubmitAIAnalyze(id, ai.VulnContext{
+			VulnID: vr.VulnID, Name: vr.Name, Severity: vr.Severity, Description: vr.Description,
+			URL: w.URL, IP: w.IP, Port: w.Port,
+			Evidence: vr.Evidence, Request: vr.Request, Response: vr.Response,
+		})
 	}
 }
 
