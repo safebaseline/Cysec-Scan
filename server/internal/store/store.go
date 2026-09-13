@@ -629,6 +629,8 @@ func (s *Store) CreateTask(t *model.ScanTask) (int64, error) {
 // scanTaskColumns UpdateTask 允许更新的列白名单（列名会拼入 SQL，禁止外部输入）
 var scanTaskColumns = map[string]bool{
 	"status": true, "progress": true, "error": true, "started_at": true, "ended_at": true,
+	"name": true, "targets": true, "mode": true, "ports": true,
+	"concurrency": true, "timeout_sec": true, "priority": true, "scan_interval": true,
 }
 
 func (s *Store) UpdateTask(id int64, fields map[string]any) error {

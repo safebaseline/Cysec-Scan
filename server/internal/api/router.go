@@ -86,6 +86,7 @@ func NewRouter(st *store.Store, cfg *config.Config, a *auth.Auth, e *engine.Engi
 	authed.POST("/tasks", a.Middleware("admin", "auditor"), api.createTask)
 	authed.GET("/tasks", api.listTasks)
 	authed.GET("/tasks/:id", api.getTask)
+	authed.PUT("/tasks/:id", a.Middleware("admin", "auditor"), api.updateTask)
 	authed.GET("/tasks/:id/logs", api.taskLogs)
 	authed.POST("/tasks/:id/pause", a.Middleware("admin", "auditor"), api.pauseTask)
 	authed.POST("/tasks/:id/resume", a.Middleware("admin", "auditor"), api.resumeTask)
@@ -862,6 +863,67 @@ func (api *API) getTask(c *gin.Context) {
 		return
 	}
 	c.JSON(200, t)
+}
+
+// updateTask 编辑任务参数（仅待执行/已完成/已终止/失败状态可改；运行中与暂停中不可）
+func (api *API) updateTask(c *gin.Context) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	t, err := api.store.GetTask(id)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "任务不存在"})
+		return
+	}
+	switch t.Status {
+	case "running", "pending", "paused":
+		c.JSON(400, gin.H{"error": "任务执行中/排队中/暂停中不可编辑，请先终止或等待结束"})
+		return
+	}
+	var req struct {
+		Name         string `json:"name"`
+		Targets      string `json:"targets"`
+		Mode         string `json:"mode"`
+		Ports        string `json:"ports"`
+		Concurrency  int    `json:"concurrency"`
+		TimeoutSec   int    `json:"timeout_sec"`
+		Priority     int    `json:"priority"`
+		ScanInterval string `json:"scan_interval"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Targets) == "" {
+		c.JSON(400, gin.H{"error": "参数错误：需要 targets"})
+		return
+	}
+	if req.Mode == "" {
+		req.Mode = t.Mode
+	}
+	if !map[string]bool{"quick": true, "standard": true, "deep": true}[req.Mode] {
+		c.JSON(400, gin.H{"error": "mode 必须为 quick/standard/deep"})
+		return
+	}
+	if req.ScanInterval != "" && engine.ParseInterval(req.ScanInterval) == 0 {
+		c.JSON(400, gin.H{"error": "scan_interval 须为 8h / 24h / 1w 或自定义小时 Nh（如 6h），或留空"})
+		return
+	}
+	if req.Concurrency <= 0 || req.Concurrency > 256 {
+		req.Concurrency = 8
+	}
+	if req.TimeoutSec <= 0 {
+		req.TimeoutSec = api.cfg.Scan.TimeoutSeconds
+	}
+	if req.Priority <= 0 {
+		req.Priority = t.Priority
+	}
+	if err := api.store.UpdateTask(id, map[string]any{
+		"name": strings.TrimSpace(req.Name), "targets": strings.TrimSpace(req.Targets),
+		"mode": req.Mode, "ports": strings.TrimSpace(req.Ports),
+		"concurrency": req.Concurrency, "timeout_sec": req.TimeoutSec,
+		"priority": req.Priority, "scan_interval": req.ScanInterval,
+	}); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	updated, _ := api.store.GetTask(id)
+	api.store.SystemLog(model.SystemLog{Username: c.GetString("username"), Action: "update_task", Object: fmt.Sprintf("task=%d", id), ClientIP: c.ClientIP(), Result: "success"})
+	c.JSON(200, updated)
 }
 
 func (api *API) taskLogs(c *gin.Context) {

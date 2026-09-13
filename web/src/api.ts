@@ -62,6 +62,7 @@ export const api = {
   tasks: (pid: number) => request(`/api/tasks?project_id=${pid}&limit=100`),
   monitorTasks: (pid: number) => request(`/api/tasks?project_id=${pid}&recurring=true&limit=100`),
   createTask: (t: any) => request('/api/tasks', { method: 'POST', body: JSON.stringify(t) }),
+  updateTask: (id: number, t: any) => request(`/api/tasks/${id}`, { method: 'PUT', body: JSON.stringify(t) }),
   taskLogs: (id: number) => request(`/api/tasks/${id}/logs`),
   taskAction: (id: number, action: string) =>
     request(`/api/tasks/${id}/${action}`, { method: 'POST' }),

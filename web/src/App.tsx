@@ -230,12 +230,17 @@ function Vulns({ pid }: { pid: number }) { const [sev, setSev] = useState(''); c
 
 function Tasks({ pid }: { pid: number }) { const [data, setData] = useState<any>({ items: [] }); const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState<any>({ name: '', targets: '', mode: 'standard', ports: '', concurrency: 8, timeout_sec: 5, priority: 5, scan_interval: '' });
+  const [editId, setEditId] = useState<number | null>(null); // 非 null 时表单为编辑模式
   const [logs, setLogs] = useState<any[] | null>(null);
   const refresh = () => api.tasks(pid).then(setData).catch(() => undefined);
   useEffect(() => { refresh(); const t = setInterval(refresh, 4000); return () => clearInterval(t); }, [pid]);
-  const create = async (e: React.FormEvent) => { e.preventDefault(); try { await api.createTask({ ...form, project_id: pid, target_type: 'ip' }); setShowCreate(false); refresh(); } catch (ex: any) { alert(ex.message); } };
-  return (<div><div className="toolbar"><span className="muted">每 4 秒刷新</span><button onClick={() => setShowCreate(!showCreate)}>+ 创建任务</button></div>
-    {showCreate && (<Card title="创建扫描任务"><form className="form" onSubmit={create}>
+  const resetForm = () => { setEditId(null); setForm({ name: '', targets: '', mode: 'standard', ports: '', concurrency: 8, timeout_sec: 5, priority: 5, scan_interval: '' }); };
+  const submit = async (e: React.FormEvent) => { e.preventDefault(); try {
+      if (editId) { await api.updateTask(editId, form); } else { await api.createTask({ ...form, project_id: pid, target_type: 'ip' }); }
+      setShowCreate(false); resetForm(); refresh(); } catch (ex: any) { alert(ex.message); } };
+  const startEdit = (t: any) => { setEditId(t.id); setForm({ name: t.name || '', targets: t.targets || '', mode: t.mode || 'standard', ports: t.ports || '', concurrency: t.concurrency || 8, timeout_sec: t.timeout_sec || 5, priority: t.priority || 5, scan_interval: t.scan_interval || '' }); setShowCreate(true); };
+  return (<div><div className="toolbar"><span className="muted">每 4 秒刷新</span><button onClick={() => { if (editId) resetForm(); setShowCreate(!showCreate); }}>+ 创建任务</button></div>
+    {showCreate && (<Card title={editId ? '编辑任务 #' + editId : '创建扫描任务'}><form className="form" onSubmit={submit}>
       <input placeholder="任务名称" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
       <textarea placeholder="目标（IP / CIDR / 域名 / URL）" value={form.targets} onChange={(e) => setForm({ ...form, targets: e.target.value })} required rows={3} />
       <div className="form-row">
@@ -247,13 +252,15 @@ function Tasks({ pid }: { pid: number }) { const [data, setData] = useState<any>
         <label>周期<select value={['','8h','24h','1w'].includes(form.scan_interval) ? form.scan_interval : 'custom'} onChange={(e) => setForm({ ...form, scan_interval: e.target.value === 'custom' ? '1h' : e.target.value })}>
           <option value="">一次性</option><option value="8h">8小时</option><option value="24h">24小时</option><option value="1w">每周</option><option value="custom">自定义</option></select></label>
         {!['','8h','24h','1w'].includes(form.scan_interval) && (<label>小时<input type="number" min={1} max={8760} style={{ width: 70 }} value={parseInt(form.scan_interval) || 1} onChange={(e) => setForm({ ...form, scan_interval: (Math.max(1, Math.min(8760, +e.target.value || 1))) + 'h' })} /></label>)}
-      </div><button type="submit">提交</button></form></Card>)}
+      </div><button type="submit">{editId ? '保存修改' : '提交'}</button>{editId && <button type="button" onClick={() => { setShowCreate(false); resetForm(); }}>取消编辑</button>}</form></Card>)}
     <Card><Table cols={['id', 'name', 'mode', 'scan_interval', 'status', 'progress', 'created_at']}
       rows={(data.items || []).map((t: any) => ({ ...t, scan_interval: t.scan_interval || '-' }))}
       actions={(t: any) => (<span>
         {t.status === 'running' && <button onClick={() => api.taskAction(t.id, 'pause').then(refresh)}>暂停</button>}
         {t.status === 'paused' && <button onClick={() => api.taskAction(t.id, 'resume').then(refresh)}>恢复</button>}
         {(t.status === 'running' || t.status === 'pending' || t.status === 'paused') && <button onClick={() => api.taskAction(t.id, 'cancel').then(refresh)}>终止</button>}
+        {['done', 'failed', 'canceled'].includes(t.status) && <button onClick={() => api.taskRun(t.id).then(refresh).catch((e: any) => alert(e.message))}>重启</button>}
+        {['done', 'failed', 'canceled'].includes(t.status) && <button onClick={() => startEdit(t)}>编辑</button>}
         <button onClick={() => api.taskLogs(t.id).then(setLogs)}>日志</button>
         <button onClick={async () => { if (await askConfirm("删除任务 #" + t.id + "？")) api.taskDelete(t.id).then(refresh); }}>删除</button></span>)} /></Card>
     {logs && (<div className="modal" onClick={() => setLogs(null)}><div className="modal-body" onClick={(e) => e.stopPropagation()}>
