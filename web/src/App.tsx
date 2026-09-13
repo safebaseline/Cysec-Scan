@@ -433,6 +433,42 @@ function Settings() { const [form, setForm] = useState<any>({}); const [msg, set
         {testRes && (testRes.loading ? <span className="muted">测试中…</span> : <span className={testRes.ok ? 'ok' : 'err'}>{testRes.ok ? `连通 ${testRes.latency_ms}ms` : testRes.error}</span>)}</div>
       {msg && <div className={msg.ok ? 'ok' : 'err'}>{msg.text}</div>}</div></Card></div>); }
 
+// WIH JS 敏感信息检测（Web Info Hunter）：规则管理与单目标即时检测，规则集默认移植自 WIHscan（MIT）
+function WihPanel() { const [cfg, setCfg] = useState<any>(null); const [msg, setMsg] = useState<any>(null);
+  const [target, setTarget] = useState(''); const [res, setRes] = useState<any>(null);
+  useEffect(() => { api.getWihSettings().then(setCfg).catch(() => undefined); }, []);
+  const save = async (c: any) => { try { const r = await api.setWihSettings(c); setCfg(r); setMsg({ ok: true, text: '已保存并即时生效' }); } catch (e: any) { setMsg({ ok: false, text: e.message }); } };
+  const toggleRule = (id: string, en: boolean) => save({ ...cfg, rules: cfg.rules.map((r: any) => (r.id === id ? { ...r, enabled: en } : r)) });
+  const editPattern = async (r: any) => { const p = await askText('编辑规则正则（' + r.id + '）', r.pattern); if (p) save({ ...cfg, rules: cfg.rules.map((x: any) => (x.id === r.id ? { ...x, pattern: p } : x)) }); };
+  const delRule = async (r: any) => { if (await askConfirm('删除规则 ' + r.id + ' ？')) save({ ...cfg, rules: cfg.rules.filter((x: any) => x.id !== r.id) }); };
+  const addRule = async () => { const id = await askText('新增 WIH 规则', '规则 ID（如 my_ak）'); if (!id) return; const pattern = await askText('新增规则 ' + id, '正则表达式'); if (!pattern) return; save({ ...cfg, rules: [...cfg.rules, { id, name: id, enabled: true, severity: 'info', pattern }] }); };
+  const runTest = async () => { if (!target.trim()) return; setRes({ loading: true }); try { setRes(await api.testWih(target.trim())); } catch (e: any) { setRes({ error: e.message }); } };
+  if (!cfg) return null;
+  return (<Card title="WIH JS 敏感信息检测"><div className="toolbar">
+    <label className="inline"><input type="checkbox" checked={!!cfg.enabled_in_scan} onChange={(e) => setCfg({ ...cfg, enabled_in_scan: e.target.checked })} />扫描时执行（标准/深度模式）</label>
+    <label>每站点 JS 上限<input type="number" style={{ width: 70 }} value={cfg.max_js_per_site} onChange={(e) => setCfg({ ...cfg, max_js_per_site: +e.target.value })} /></label>
+    <button onClick={() => save(cfg)}>保存</button>
+    <button onClick={addRule}>＋ 规则</button>
+    <span className="muted">共 {cfg.rules.length} 条 · 启用 {cfg.rules.filter((r: any) => r.enabled).length} 条</span>
+    {msg && <span className={msg.ok ? 'ok' : 'err'}>{msg.text}</span>}</div>
+    <div className="toolbar">
+      <input className="search" placeholder="即时检测：页面或 JS 的 URL" value={target} onChange={(e) => setTarget(e.target.value)} />
+      <button onClick={runTest}>检测</button>
+      {res?.loading && <span className="muted">检测中…</span>}
+      {res?.error && <span className="err">{res.error}</span>}
+      {res?.hits && <span className={res.hits.length ? 'ok' : 'muted'}>{res.hits.length ? '命中 ' + res.hits.length + ' 条' : '未发现敏感信息'}</span>}</div>
+    {res?.hits && res.hits.length > 0 && (<table className="tbl"><thead><tr><th>等级</th><th>名称</th><th>命中内容</th></tr></thead>
+      <tbody>{res.hits.map((h: any, i: number) => (<tr key={i}><td><SevTag sev={h.severity} /></td><td>{h.name}</td><td style={{ maxWidth: 480, wordBreak: 'break-all' }}>{h.match}</td></tr>))}</tbody></table>)}
+    <table className="tbl"><thead><tr><th>id</th><th>名称</th><th>等级</th><th>正则</th><th>启用</th><th style={{ textAlign: 'right' }}>操作</th></tr></thead>
+      <tbody>{cfg.rules.map((r: any) => (<tr key={r.id}>
+        <td>{r.id}</td><td>{r.name}</td><td><SevTag sev={r.severity || 'info'} /></td>
+        <td style={{ maxWidth: 420, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.pattern}>{r.pattern}</td>
+        <td><input type="checkbox" checked={r.enabled} onChange={(e) => toggleRule(r.id, e.target.checked)} /></td>
+        <td className="row-act"><button onClick={() => editPattern(r)}>编辑</button> <button onClick={() => delRule(r)}>删除</button></td>
+      </tr>))}</tbody></table>
+    <div className="muted" style={{ marginTop: 6 }}>扫描时对站点首页与引用 JS（限额内）执行规则匹配，命中以漏洞形式入库（组件标注 WIH）。</div>
+  </Card>); }
+
 function VulnRules() { const [data, setData] = useState<any>({ items: [], total: 0 }); const [stats, setStats] = useState<any>(null);
   const [filters, setFilters] = useState({ source: '', severity: '', enabled: '', supported: '', q: '' });
   const [pg, setPg] = useState(1);
@@ -474,6 +510,7 @@ function VulnRules() { const [data, setData] = useState<any>({ items: [], total:
       <button onClick={saveSettings}>保存</button>
       {stats && <span className="muted">共 {stats.total} · 可执行 {stats.supported} · 启用 {stats.enabled}</span>}
       <button style={{ marginLeft: 'auto' }} onClick={clearAll}>全部删除</button></div></Card>
+    <WihPanel />
     <Card title="模板源更新"><div className="toolbar">
       <input className="search" placeholder="GitHub 仓库 URL" value={newURL} onChange={(e) => setNewURL(e.target.value)} /><button onClick={() => { if (newURL.trim()) { applySources({ ...sources.config, sources: [...(sources.config?.sources || []), { url: newURL.trim(), enabled: true }] }, '已添加'); setNewURL(''); } }}>添加源</button>
       <label className="inline"><input type="checkbox" checked={!!sources.config?.auto_daily} onChange={(e) => applySources({ ...sources.config, auto_daily: e.target.checked }, '已更新')} />每日自动更新</label>

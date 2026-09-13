@@ -27,6 +27,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"cysec/internal/vulnrule"
+	"cysec/internal/wih"
 
 	"github.com/gin-gonic/gin"
 )
@@ -133,6 +134,9 @@ func NewRouter(st *store.Store, cfg *config.Config, a *auth.Auth, e *engine.Engi
 	authed.POST("/vuln-rules/sources/update", a.Middleware("admin"), api.updateRuleSources)
 	authed.GET("/vuln-rules/watcher", api.getWatcher)
 	authed.PUT("/vuln-rules/watcher", a.Middleware("admin"), api.setWatcher)
+	authed.GET("/wih/settings", api.getWihSettings)
+	authed.PUT("/wih/settings", a.Middleware("admin"), api.setWihSettings)
+	authed.POST("/wih/test", a.Middleware("admin", "auditor"), api.testWihScan)
 	authed.POST("/logout", api.logout)
 
 	return r
@@ -1303,6 +1307,67 @@ func (api *API) testVulnRule(c *gin.Context) {
 	}
 	res := vulnrule.Run(r, req.Target, 10)
 	c.JSON(200, res)
+}
+
+// ---------- WIH JS 敏感信息检测（Web Info Hunter，规则集源自 ifacker/WIHscan / MIT） ----------
+
+const wihSettingsKey = "wih_settings"
+
+// loadWih 从设置读取 WIH 配置（无保存时返回默认规则集）
+func (api *API) loadWih() wih.Settings {
+	if saved, _ := api.store.GetSetting(wihSettingsKey); saved != "" {
+		var st wih.Settings
+		if json.Unmarshal([]byte(saved), &st) == nil && len(st.Rules) > 0 {
+			st.Normalize()
+			return st
+		}
+	}
+	return wih.DefaultSettings()
+}
+
+func (api *API) getWihSettings(c *gin.Context) {
+	c.JSON(200, api.loadWih())
+}
+
+func (api *API) setWihSettings(c *gin.Context) {
+	var st wih.Settings
+	if err := c.ShouldBindJSON(&st); err != nil {
+		c.JSON(400, gin.H{"error": "参数错误: " + err.Error()})
+		return
+	}
+	st.Normalize()
+	data, _ := json.Marshal(st)
+	if err := api.store.SetSetting(wihSettingsKey, string(data)); err != nil {
+		c.JSON(500, gin.H{"error": "保存失败: " + err.Error()})
+		return
+	}
+	wih.SetCurrent(st) // 即时生效（引擎插件读取全局当前设置）
+	c.JSON(200, st)
+}
+
+// testWihScan 对指定 URL（页面或 JS）即时执行当前启用规则（对应 WIHscan 的 -u 模式）
+func (api *API) testWihScan(c *gin.Context) {
+	var req struct {
+		Target string `json:"target"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Target) == "" {
+		c.JSON(400, gin.H{"error": "参数错误：需要 target URL"})
+		return
+	}
+	target := strings.TrimSpace(req.Target)
+	st := wih.Current()
+	hits, err := wih.ScanURL(st.Rules, target, 10)
+	if err != nil {
+		c.JSON(502, gin.H{"error": "抓取失败: " + err.Error()})
+		return
+	}
+	out := make([]wih.Hit, 0, len(hits))
+	for _, h := range hits {
+		if !st.Excluded(h, target) {
+			out = append(out, h)
+		}
+	}
+	c.JSON(200, gin.H{"target": target, "hits": out})
 }
 
 // ---------- 模板源管理与在线更新 ----------

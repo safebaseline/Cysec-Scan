@@ -120,4 +120,9 @@ export const api = {
   getRuleSettings: () => request('/api/vuln-rules/settings'),
   setRuleSettings: (s: any) =>
     request('/api/vuln-rules/settings', { method: 'PUT', body: JSON.stringify(s) }),
+  getWihSettings: () => request('/api/wih/settings'),
+  setWihSettings: (cfg: any) =>
+    request('/api/wih/settings', { method: 'PUT', body: JSON.stringify(cfg) }),
+  testWih: (target: string) =>
+    request('/api/wih/test', { method: 'POST', body: JSON.stringify({ target }) }),
 };

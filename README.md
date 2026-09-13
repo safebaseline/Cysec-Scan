@@ -44,6 +44,7 @@
 - **报文留痕**：每条漏洞记录完整请求/响应报文（Burp Suite 风格展示），便于人工复核
 - 漏洞统一格式与去重（资产 + 端口 + URL + 漏洞 ID），风险等级 Critical ~ Info
 - 内置风险检测（非破坏性）：HTTP 安全头、敏感路径泄露、SSL/TLS、组件版本、敏感服务暴露
+- **WIH JS 敏感信息检测**：扫描站点首页与引用 JS，正则匹配云 AK/SK、JWT、密码、机器人 Webhook 等泄露并入库（默认规则集移植自 [WIHscan](https://github.com/ifacker/WIHscan)，MIT；规则可在漏洞规则库页管理，支持单 URL 即时检测）
 
 ### AI 研判
 

@@ -26,6 +26,7 @@ func init() {
 	plugins.RegisterRiskScanner(&leakRiskScanner{})
 	plugins.RegisterRiskScanner(&tlsRiskScanner{})
 	plugins.RegisterRiskScanner(&componentRiskScanner{})
+	plugins.RegisterRiskScanner(&wihRiskScanner{})
 }
 
 // ---------- 存活探测（TCP Ping，避免依赖原始套接字权限） ----------

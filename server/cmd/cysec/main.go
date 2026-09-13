@@ -24,6 +24,7 @@ import (
 	"cysec/internal/store"
 	"cysec/internal/ua"
 	"cysec/internal/vulnrule"
+	"cysec/internal/wih"
 	"github.com/gin-gonic/gin"
 )
 
@@ -112,6 +113,14 @@ func main() {
 	a := auth.New(st, cfg.Auth.BootstrapAdminUser, cfg.Auth.BootstrapAdminPass, cfg.Auth.TokenTTLHours)
 	if err := a.Bootstrap(); err != nil {
 		log.Fatalf("初始化管理员失败: %v", err)
+	}
+
+	// WIH JS 敏感信息检测：启动时从库中恢复设置（界面保存后即时生效）
+	if saved, _ := st.GetSetting("wih_settings"); saved != "" {
+		var ws wih.Settings
+		if json.Unmarshal([]byte(saved), &ws) == nil && len(ws.Rules) > 0 {
+			wih.SetCurrent(ws)
+		}
 	}
 
 	e := engine.New(st, cfg)
