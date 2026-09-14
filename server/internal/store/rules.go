@@ -226,3 +226,20 @@ func boolInt(b bool) int {
 }
 
 var _ = sql.ErrNoRows
+
+// WebsOfProject 取项目内全部 Web 资产的基础字段（官方 nuclei 引擎结果映射用）
+func (s *Store) WebsOfProject(projectID int64) []model.AssetWeb {
+	rows, err := s.db.Query(`SELECT project_id, url, ip, domain, port FROM asset_web WHERE project_id=?`, projectID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := []model.AssetWeb{}
+	for rows.Next() {
+		var w model.AssetWeb
+		if rows.Scan(&w.ProjectID, &w.URL, &w.IP, &w.Domain, &w.Port) == nil {
+			out = append(out, w)
+		}
+	}
+	return out
+}

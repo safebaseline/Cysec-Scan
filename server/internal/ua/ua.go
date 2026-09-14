@@ -66,3 +66,14 @@ func Apply(req *http.Request) {
 		req.Header.Set(k, v)
 	}
 }
+
+// CurrentHeaders 返回当前全局出站请求头快照（User-Agent 与附加头合并）
+func CurrentHeaders() map[string]string {
+	out := map[string]string{"User-Agent": Get()}
+	extraMu.RLock()
+	defer extraMu.RUnlock()
+	for k, v := range extraHdr {
+		out[k] = v
+	}
+	return out
+}

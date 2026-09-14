@@ -35,6 +35,9 @@ type Engine struct {
 	stopPoll      chan struct{}
 	autoScanQueue chan autoScanJob // 新增 Web 资产实时漏洞扫描队列（nil 表示未启用）
 	aiQueue       chan aiAnalyzeJob // 新增漏洞实时 AI 研判队列（nil 表示未启用）
+
+	webURLMu sync.Mutex
+	webURLs  map[int64][]string // taskID -> 本轮发现的 Web 资产 URL（供官方 nuclei 引擎批量阶段收集）
 }
 
 type taskRun struct {
@@ -50,6 +53,7 @@ func New(st *store.Store, cfg *config.Config) *Engine {
 		running:  map[int64]*taskRun{},
 		queue:    make(chan int64, 1024),
 		stopPoll: make(chan struct{}),
+		webURLs:  map[int64][]string{},
 	}
 	go e.pollLoop()
 	go e.monitorLoop()
@@ -269,6 +273,9 @@ func (e *Engine) Execute(taskID int64) {
 	// 补充探测（覆盖非常用端口上的 vhost 站点；80/443 已由 probeDomainWebs 默认探测覆盖）
 	e.probeDomainPortWebs(task, webDomains)
 
+	// 官方 nuclei 引擎批量阶段：对本轮发现的全部 Web 资产执行启用的 nuclei 规则
+	e.runNucleiPhase(task, e.takeScanWebURLs(task.ID))
+
 	// 注：新增 Web 资产的默认漏洞扫描已由实时扫描器（autoscan）承担——
 	// 快速模式任务在 detectWeb 发现新资产时即提交异步扫描，覆盖全部来源，无需任务末补扫
 
@@ -381,6 +388,8 @@ func (e *Engine) detectWeb(task *model.ScanTask, webURL, ip string, timeoutSec i
 			e.SubmitAutoScan(task.ProjectID, w.URL)
 		}
 	}
+	// 收集本轮 Web 资产 URL：任务结束时由官方 nuclei 引擎批量执行规则
+	e.addScanWebURL(task.ID, w.URL)
 
 	// 技术指纹
 	body := fetchBody(webURL, timeoutSec)
@@ -808,6 +817,14 @@ func (e *Engine) runVulnRules(task *model.ScanTask, w *plugins.WebResult) {
 		return
 	}
 	rules := e.store.EnabledRulesForScan(st.MaxPerTarget)
+	// nuclei 源规则由官方引擎在任务级批量阶段执行（本内联阶段跳过，避免双重执行与自研执行器误报）
+	filtered := make([]vulnrule.Rule, 0, len(rules))
+	for _, r := range rules {
+		if r.Source != "nuclei" {
+			filtered = append(filtered, r)
+		}
+	}
+	rules = filtered
 	if len(rules) == 0 {
 		return
 	}

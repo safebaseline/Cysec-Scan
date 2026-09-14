@@ -50,5 +50,8 @@ func (e *Engine) SubmitAutoScan(projectID int64, url string) {
 // 合成任务 ID=0：检测产生的漏洞正常入库与记变化，任务日志由 store 层过滤非法 ID 不落库。
 func (e *Engine) runAutoScan(j autoScanJob) {
 	timeout := maxInt(e.cfg.Scan.TimeoutSeconds, 5)
-	e.detectWeb(&model.ScanTask{ProjectID: j.projectID, Mode: "standard", TimeoutSec: timeout}, j.url, "", timeout)
+	task := &model.ScanTask{ProjectID: j.projectID, Mode: "standard", TimeoutSec: timeout}
+	e.detectWeb(task, j.url, "", timeout)
+	// nuclei 源规则由官方引擎批量执行（实时扫描单目标）
+	e.runNucleiPhase(task, []string{j.url})
 }

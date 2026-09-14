@@ -152,6 +152,8 @@ func main() {
 		}
 	}
 	os.MkdirAll(pocRoot, 0o755)
+	// 官方 nuclei 引擎模板根目录（克隆仓库与导入模板均在此）
+	vulnrule.SetNucleiTemplateRoot(filepath.Join(pocRoot, "nuclei"))
 	// 新增规则（POC 目录监控 或 模板源更新）→ 对全部资产执行新规则扫描
 	vulnrule.SetNewRulesHandler(func(rules []vulnrule.Rule) {
 		scanAllAssetsWithNewRules(e, st, rules)

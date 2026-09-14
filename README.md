@@ -33,9 +33,9 @@
 
 ### 漏洞检测引擎
 
-- **三种规则格式**：nuclei（http + matchers + DSL）、xray（CEL 表达式）、afrog（set 变量 + CEL），
-  导入时自动识别格式，不支持的语法自动标记为不可执行
-- **DSL 求值器**：自研递归下降解析器，支持 40+ nuclei DSL 函数与逻辑运算
+- **nuclei 源规则由官方引擎执行**（内嵌 [projectdiscovery/nuclei](https://github.com/projectdiscovery/nuclei) v3 引擎库，MIT）：任务级批量执行（对本轮发现的全部 Web 资产一次跑全部启用规则），匹配语义与 nuclei CLI 完全一致，遵循全局出站代理与 headers 配置，杜绝自研执行器的匹配语义误报
+- **xray / afrog 源规则**：自研执行器（CEL 表达式、set 变量），导入时自动识别格式，不支持的语法标记为不可执行
+- **DSL 求值器**：自研递归下降解析器，支持 40+ nuclei DSL 函数与逻辑运算（用于 xray/afrog 路径与规则测试）
 - **OOB 反连检测**：内置 interactsh 兼容服务端，单会话注册多子域复用，支持 `{{interactsh-url}}` 模板变量与回调精确匹配
 - **误报治理**（多层过滤）：
   - 基线指纹：随机路径探测取基线，命中响应与基线一致的 CDN/WAF/SPA 通用页面直接否决
