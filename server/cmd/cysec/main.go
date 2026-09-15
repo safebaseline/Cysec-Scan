@@ -286,6 +286,20 @@ func scanAllAssetsWithNewRules(e *engine.Engine, st *store.Store, rules []vulnru
 		return
 	}
 	log.Printf("[POC监控] 检测到 %d 条新增规则，开始对 %d 个 Web 资产扫描（白名单跳过 %d 个）", len(rules), len(webs), skipped)
+	// nuclei 源规则由官方引擎批量执行（自研执行器对官方模板误报率高）
+	nucleiIDs := []string{}
+	otherRules := []vulnrule.Rule{}
+	for _, r := range rules {
+		if r.Source == "nuclei" {
+			nucleiIDs = append(nucleiIDs, r.RuleID)
+		} else {
+			otherRules = append(otherRules, r)
+		}
+	}
+	if len(nucleiIDs) > 0 {
+		matchedTotal += e.ScanAssetsWithNucleiRules(nucleiIDs, 8)
+	}
+	rules = otherRules
 	for i := range rules {
 		for _, w := range webs {
 			res := vulnrule.Run(&rules[i], w.URL, 8)

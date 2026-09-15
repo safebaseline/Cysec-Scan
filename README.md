@@ -33,7 +33,7 @@
 
 ### 漏洞检测引擎
 
-- **nuclei 源规则由官方引擎执行**（内嵌 [projectdiscovery/nuclei](https://github.com/projectdiscovery/nuclei) v3 引擎库，MIT）：任务级批量执行（对本轮发现的全部 Web 资产一次跑全部启用规则），匹配语义与 nuclei CLI 完全一致，遵循全局出站代理与 headers 配置，杜绝自研执行器的匹配语义误报
+- **nuclei 源规则由官方引擎执行**（内嵌 [projectdiscovery/nuclei](https://github.com/projectdiscovery/nuclei) v3 引擎库，MIT）：**发现即扫**——每个新 Web 资产入库即提交扫描，队列微批聚合（5 秒窗口最多 20 资产一次引擎调用，兼顾实时性与引擎初始化开销）；POC 目录监控 / 模板源更新的新增规则同样经官方引擎对全部资产执行。匹配语义与 nuclei CLI 完全一致，遵循全局出站代理与 headers 配置，杜绝自研执行器的匹配语义误报
 - **xray / afrog 源规则**：自研执行器（CEL 表达式、set 变量），导入时自动识别格式，不支持的语法标记为不可执行
 - **DSL 求值器**：自研递归下降解析器，支持 40+ nuclei DSL 函数与逻辑运算（用于 xray/afrog 路径与规则测试）
 - **OOB 反连检测**：内置 interactsh 兼容服务端，单会话注册多子域复用，支持 `{{interactsh-url}}` 模板变量与回调精确匹配

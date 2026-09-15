@@ -11,6 +11,7 @@ import (
 
 // autoScanJob 实时扫描任务
 type autoScanJob struct {
+	taskID    int64 // 归属任务（实时扫描等合成上下文为 0，日志走服务端输出）
 	projectID int64
 	url       string
 }
@@ -52,6 +53,6 @@ func (e *Engine) runAutoScan(j autoScanJob) {
 	timeout := maxInt(e.cfg.Scan.TimeoutSeconds, 5)
 	task := &model.ScanTask{ProjectID: j.projectID, Mode: "standard", TimeoutSec: timeout}
 	e.detectWeb(task, j.url, "", timeout)
-	// nuclei 源规则由官方引擎批量执行（实时扫描单目标）
-	e.runNucleiPhase(task, []string{j.url})
+	// nuclei 源规则：新 Web 资产交官方引擎实时扫描（串行队列）
+	e.SubmitNucleiScan(0, j.projectID, j.url)
 }
