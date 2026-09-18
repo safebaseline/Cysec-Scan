@@ -126,7 +126,44 @@ func (b *bannerIdentifier) Identify(ip string, pr plugins.PortResult, timeoutSec
 			pr.Version = v
 		}
 	}
+	// 裸 CRLF 无响应或仍未识别服务时，主动发一次 HTTP 请求探测：
+	// 标准 HTTP 服务器（如 python http.server）对空行直接断开不回 banner，
+	// 但对真实请求会返回状态行，避免非常用端口上的 Web 服务被漏标。
+	if n == 0 || pr.Service == "" {
+		if svc := probeHTTPBanner(ip, pr.Port, timeoutSec); svc != "" {
+			if pr.Service == "" {
+				pr.Service = "HTTP"
+			}
+			if pr.Banner == "" {
+				pr.Banner = svc
+			}
+		}
+	}
 	return pr
+}
+
+// probeHTTPBanner 对端口发起 GET / 探测，返回 HTTP 响应首行（非 HTTP 服务返回空）
+func probeHTTPBanner(ip string, port, timeoutSec int) string {
+	conn, err := netproxy.DirectDialTimeout("tcp", net.JoinHostPort(ip, fmt.Sprint(port)), time.Duration(timeoutSec)*time.Second)
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(time.Duration(timeoutSec) * time.Second))
+	fmt.Fprintf(conn, "GET / HTTP/1.1\r\nHost: %s\r\nUser-Agent: Cysec-Scan/ServiceProbe\r\nConnection: close\r\n\r\n", net.JoinHostPort(ip, fmt.Sprint(port)))
+	buf := make([]byte, 256)
+	n, _ := conn.Read(buf)
+	if n == 0 {
+		return ""
+	}
+	line := strings.TrimSpace(string(buf[:n]))
+	if strings.HasPrefix(strings.ToUpper(line), "HTTP/") {
+		if i := strings.IndexAny(line, "\r\n"); i > 0 {
+			line = line[:i]
+		}
+		return line
+	}
+	return ""
 }
 
 func guessServiceFromBanner(banner string) string {

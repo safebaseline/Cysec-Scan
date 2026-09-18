@@ -59,7 +59,7 @@ function Pager({ total, page, setPage }: { total: number; page: number; setPage:
 }
 // 通用中英文标签映射
 const LABEL_MAP: Record<string, string> = {
-  severity: '风险等级', vuln_id: '漏洞编号', name: '漏洞名称', ip: 'IP', port: '端口', url: 'URL',
+  severity: '风险等级', vuln_id: '漏洞编号', name: '名称', ip: 'IP', port: '端口', url: 'URL',
   component: '组件', mark: '标记', id: 'ID', source: '来源', rule_id: '规则编号', tags: '标签',
   supported: '可执行', enabled: '启用', status: '状态', progress: '进度', mode: '模式',
   scan_interval: '周期', created_by: '创建人', created_at: '创建时间', ended_at: '结束时间',

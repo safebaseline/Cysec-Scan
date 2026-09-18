@@ -162,7 +162,8 @@ func (e *Engine) Execute(taskID int64) {
 		e.mu.Unlock()
 		return
 	}
-	run := &taskRun{cancel: make(chan struct{}), pause: make(chan struct{}), resume: make(chan struct{})}
+	// pause/resume 缓冲 1：控制操作非阻塞立即返回，扫描循环在下一个检查点消费信号
+	run := &taskRun{cancel: make(chan struct{}), pause: make(chan struct{}, 1), resume: make(chan struct{}, 1)}
 	e.running[taskID] = run
 	e.mu.Unlock()
 	defer func() {
@@ -984,18 +985,20 @@ func (e *Engine) scoreIPs(projectID int64, ips []string) {
 // Pause / Resume / Cancel
 func (e *Engine) Pause(taskID int64) error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	if r, ok := e.running[taskID]; ok {
+		// 非阻塞投递暂停信号（缓冲 1，重复暂停幂等）；顺带清掉滞留的 resume，保证暂停生效
 		select {
-		case <-runPause(r):
+		case r.pause <- struct{}{}:
 		default:
-			r.pause <- struct{}{}
+		}
+		select {
+		case <-r.resume:
+		default:
 		}
 	}
+	e.mu.Unlock()
 	return e.store.UpdateTask(taskID, map[string]any{"status": "paused"})
 }
-
-func runPause(r *taskRun) chan struct{} { return r.pause }
 
 func (e *Engine) Resume(taskID int64) error {
 	e.mu.Lock()
