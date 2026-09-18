@@ -244,10 +244,18 @@ function Tasks({ pid }: { pid: number }) { const [data, setData] = useState<any>
   const [form, setForm] = useState<any>({ name: '', targets: '', mode: 'standard', ports: '', concurrency: 8, timeout_sec: 5, priority: 5, scan_interval: '' });
   const [editId, setEditId] = useState<number | null>(null); // 非 null 时表单为编辑模式
   const [logs, setLogs] = useState<any[] | null>(null);
-  const [logTaskId, setLogTaskId] = useState<number>(0); // 日志弹窗打开期间每 2 秒自动刷新
+  const [logTaskId, setLogTaskId] = useState<number>(0); // 日志弹窗开关：>0 打开，关闭时清零（否则轮询会把弹窗填回来）
   const refresh = () => api.tasks(pid).then(setData).catch(() => undefined);
   useEffect(() => { refresh(); const t = setInterval(refresh, 4000); return () => clearInterval(t); }, [pid]);
-  useEffect(() => { if (!logTaskId) return; const t = setInterval(() => api.taskLogs(logTaskId).then(setLogs).catch(() => undefined), 2000); return () => clearInterval(t); }, [logTaskId]);
+  useEffect(() => {
+    if (!logTaskId) return;
+    let alive = true; // 关闭后丢弃在途响应，防止 setLogs 把弹窗重新顶出来
+    const tick = () => api.taskLogs(logTaskId).then((l: any[]) => { if (alive) setLogs(l); }).catch(() => undefined);
+    tick();
+    const t = setInterval(tick, 2000);
+    return () => { alive = false; clearInterval(t); };
+  }, [logTaskId]);
+  const closeLogs = () => { setLogTaskId(0); setLogs(null); };
   const resetForm = () => { setEditId(null); setForm({ name: '', targets: '', mode: 'standard', ports: '', concurrency: 8, timeout_sec: 5, priority: 5, scan_interval: '' }); };
   const submit = async (e: React.FormEvent) => { e.preventDefault(); try {
       if (editId) { await api.updateTask(editId, form); } else { await api.createTask({ ...form, project_id: pid, target_type: 'ip' }); }
@@ -275,10 +283,10 @@ function Tasks({ pid }: { pid: number }) { const [data, setData] = useState<any>
         {(t.status === 'running' || t.status === 'pending' || t.status === 'paused') && <button onClick={() => api.taskAction(t.id, 'cancel').then(refresh)}>终止</button>}
         {['done', 'failed', 'canceled'].includes(t.status) && <button onClick={() => api.taskRun(t.id).then(refresh).catch((e: any) => alert(e.message))}>重启</button>}
         {['done', 'failed', 'canceled'].includes(t.status) && <button onClick={() => startEdit(t)}>编辑</button>}
-        <button onClick={() => { setLogTaskId(t.id); api.taskLogs(t.id).then(setLogs); }}>日志</button>
+        <button onClick={() => setLogTaskId(t.id)}>日志</button>
         <button onClick={async () => { if (await askConfirm("删除任务 #" + t.id + "？")) api.taskDelete(t.id).then(refresh); }}>删除</button></span>)} /></Card>
-    {logs && (<div className="modal" onClick={() => { setLogs(null); setLogTaskId(0); }}><div className="modal-body" onClick={(e) => e.stopPropagation()}>
-      <div className="modal-head"><h3>日志</h3><button onClick={() => setLogs(null)}>关闭</button></div>
+    {logTaskId > 0 && logs && (<div className="modal" onClick={closeLogs}><div className="modal-body" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-head"><h3>日志</h3><button onClick={closeLogs}>关闭</button></div>
       <pre className="logs">{logs.map((l: any) => `[${fmtTime(l.created_at)}] ${l.message}`).join('\n')}</pre></div></div>)}</div>); }
 
 const INTERVAL_LABEL: Record<string, string> = { '8h': '每 8 小时', '24h': '每 24 小时', '1w': '每周' };
