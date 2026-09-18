@@ -437,6 +437,17 @@ func (s *Store) UserCount() (int, error) {
 	return n, err
 }
 
+func (s *Store) UpdateUserPassword(username, hash string) error {
+	_, err := s.db.Exec(`UPDATE users SET password=? WHERE username=?`, hash, username)
+	return err
+}
+
+// DeleteUserTokensExcept 吊销该用户除 keep 外的全部会话（改密后踢掉其他登录态）
+func (s *Store) DeleteUserTokensExcept(username, keep string) error {
+	_, err := s.db.Exec(`DELETE FROM tokens WHERE username=? AND token<>?`, username, keep)
+	return err
+}
+
 func (s *Store) SaveToken(t model.Token) error {
 	_, err := s.db.Exec(`INSERT OR REPLACE INTO tokens(token,username,expires_at) VALUES(?,?,?)`, t.Token, t.Username, t.ExpiresAt)
 	return err

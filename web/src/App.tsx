@@ -415,6 +415,17 @@ function Settings() { const [form, setForm] = useState<any>({}); const [msg, set
   useEffect(() => { api.getWhitelist().then((w: any) => setWlText((w.items || []).join('\n'))).catch(() => undefined); }, []);
   const saveWL = async () => { const items = wlText.split('\n').map((x: any) => x.trim()).filter((x: any) => x !== '');
     try { const r = await api.setWhitelist(items); setWlText((r.items || []).join('\n')); setWlMsg('已保存'); } catch (ex: any) { setWlMsg(ex.message); } };
+  const [pw, setPw] = useState({ old: '', neu: '', confirm: '' }); const [pwMsg, setPwMsg] = useState<any>(null);
+  const submitPw = async () => {
+    setPwMsg(null);
+    if (pw.neu.length < 6) { setPwMsg({ ok: false, text: '新密码至少 6 位' }); return; }
+    if (pw.neu !== pw.confirm) { setPwMsg({ ok: false, text: '两次输入的新密码不一致' }); return; }
+    try {
+      await api.changePassword(pw.old, pw.neu);
+      setPw({ old: '', neu: '', confirm: '' });
+      setPwMsg({ ok: true, text: '密码已修改；其他登录会话已注销，当前会话保持有效' });
+    } catch (ex: any) { setPwMsg({ ok: false, text: ex.message }); }
+  };
   return (<div>
     <MappingSettings />
     <Card title="AI 研判配置（OpenAI 兼容）"><div className="form">
@@ -429,8 +440,8 @@ function Settings() { const [form, setForm] = useState<any>({}); const [msg, set
             <span style={{ position: 'relative', display: 'inline-block' }}>
               <input style={{ width: 160 }} placeholder="点击获取" value={aiCfg.model || ''} onChange={(e) => setAiCfg({ ...aiCfg, model: e.target.value })} />
               {aiModels.length > 0 && <button type="button" onClick={() => setAiModelOpen(!aiModelOpen)} style={{ fontSize: 10, padding: '6px 4px', marginLeft: 2, verticalAlign: 'top' }}>▼</button>}
-              {aiModelOpen && aiModels.length > 0 && (<div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 30, background: '#161B22', border: '1px solid #30363D', borderRadius: 4, maxHeight: 220, overflowY: 'auto', minWidth: 200, boxShadow: '0 4px 12px rgba(0,0,0,.4)' }}>
-                {aiModels.map((m: string) => (<div key={m} onMouseDown={() => { setAiCfg({ ...aiCfg, model: m }); setAiModelOpen(false); }} style={{ padding: '5px 10px', cursor: 'pointer', color: m === aiCfg.model ? '#58A6FF' : '#E6EDF3', whiteSpace: 'nowrap' }}>{m}</div>))}
+              {aiModelOpen && aiModels.length > 0 && (<div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 30, background: 'var(--panel)', border: '1px solid var(--border-hover)', borderRadius: 'var(--radius-xs)', maxHeight: 220, overflowY: 'auto', minWidth: 200, boxShadow: 'var(--shadow-md)' }}>
+                {aiModels.map((m: string) => (<div key={m} onMouseDown={() => { setAiCfg({ ...aiCfg, model: m }); setAiModelOpen(false); }} style={{ padding: '5px 10px', cursor: 'pointer', color: m === aiCfg.model ? 'var(--accent)' : 'var(--text)', whiteSpace: 'nowrap' }}>{m}</div>))}
               </div>)}
             </span>
             <button type="button" onClick={fetchModels} disabled={aiLoadingModels} style={{ marginTop: 4, fontSize: 12, padding: '2px 8px' }}>{aiLoadingModels ? '获取中…' : '获取模型列表'}</button>
@@ -466,7 +477,16 @@ function Settings() { const [form, setForm] = useState<any>({}); const [msg, set
       <div className="toolbar"><button onClick={save}>保存并生效</button>
         <input placeholder="测试目标" value={testTarget} onChange={(e) => setTestTarget(e.target.value)} /><button onClick={test}>测试</button>
         {testRes && (testRes.loading ? <span className="muted">测试中…</span> : <span className={testRes.ok ? 'ok' : 'err'}>{testRes.ok ? `连通 ${testRes.latency_ms}ms` : testRes.error}</span>)}</div>
-      {msg && <div className={msg.ok ? 'ok' : 'err'}>{msg.text}</div>}</div></Card></div>); }
+      {msg && <div className={msg.ok ? 'ok' : 'err'}>{msg.text}</div>}</div></Card>
+    <Card title="账号安全（修改密码）"><div className="form">
+      <div className="form-row">
+        <label>当前密码<input type="password" style={{ width: 180 }} value={pw.old} onChange={(e) => setPw({ ...pw, old: e.target.value })} /></label>
+        <label>新密码（至少 6 位）<input type="password" style={{ width: 180 }} value={pw.neu} onChange={(e) => setPw({ ...pw, neu: e.target.value })} /></label>
+        <label>确认新密码<input type="password" style={{ width: 180 }} value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} /></label>
+      </div>
+      <div className="toolbar"><button onClick={submitPw}>修改密码</button>{pwMsg && <span className={pwMsg.ok ? 'ok' : 'err'} style={{ marginTop: 0 }}>{pwMsg.text}</span>}</div>
+      <p className="hint">修改成功后其他设备的登录会话将被注销，当前会话不受影响。</p></div></Card>
+    </div>); }
 
 // WIH JS 敏感信息检测（Web Info Hunter）：规则管理与单目标即时检测，规则集默认移植自 WIHscan（MIT）
 function WihPanel() { const [cfg, setCfg] = useState<any>(null); const [msg, setMsg] = useState<any>(null);

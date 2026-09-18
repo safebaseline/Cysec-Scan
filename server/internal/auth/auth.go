@@ -63,6 +63,25 @@ func (a *Auth) Login(username, password string) (string, error) {
 
 func (a *Auth) Logout(token string) { a.store.DeleteToken(token) }
 
+// ChangePassword 校验旧密码后改用新密码（bcrypt），并吊销该用户其余会话（当前会话保留）
+func (a *Auth) ChangePassword(username, oldPass, newPass, currentToken string) error {
+	u, err := a.store.GetUser(username)
+	if err != nil {
+		return ErrUnauthorized
+	}
+	if bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(oldPass)) != nil {
+		return ErrUnauthorized
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPass), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	if err := a.store.UpdateUserPassword(username, string(hash)); err != nil {
+		return err
+	}
+	return a.store.DeleteUserTokensExcept(username, currentToken)
+}
+
 func (a *Auth) Verify(token string) (string, error) {
 	t, err := a.store.GetToken(token)
 	if err != nil || time.Now().After(t.ExpiresAt) {

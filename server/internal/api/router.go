@@ -4,6 +4,7 @@ package api
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -140,6 +141,7 @@ func NewRouter(st *store.Store, cfg *config.Config, a *auth.Auth, e *engine.Engi
 	authed.PUT("/wih/settings", a.Middleware("admin"), api.setWihSettings)
 	authed.POST("/wih/test", a.Middleware("admin", "auditor"), api.testWihScan)
 	authed.POST("/logout", api.logout)
+	authed.POST("/auth/password", api.changePassword)
 
 	return r
 }
@@ -163,6 +165,39 @@ func (api *API) login(c *gin.Context) {
 func (api *API) logout(c *gin.Context) {
 	token := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
 	api.auth.Logout(token)
+	c.JSON(200, gin.H{"ok": true})
+}
+
+// changePassword 当前登录用户修改自己的密码（需验证旧密码，成功后吊销其他会话）
+func (api *API) changePassword(c *gin.Context) {
+	var req struct {
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "bad request"})
+		return
+	}
+	if len(req.NewPassword) < 6 {
+		c.JSON(400, gin.H{"error": "新密码至少 6 位"})
+		return
+	}
+	if len(req.NewPassword) > 72 {
+		c.JSON(400, gin.H{"error": "新密码过长（最多 72 位）"})
+		return
+	}
+	username := c.GetString("username")
+	token := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+	if err := api.auth.ChangePassword(username, req.OldPassword, req.NewPassword, token); err != nil {
+		if errors.Is(err, auth.ErrUnauthorized) {
+			api.store.SystemLog(model.SystemLog{Username: username, Action: "change_password", ClientIP: c.ClientIP(), Result: "failed"})
+			c.JSON(400, gin.H{"error": "旧密码不正确"})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	api.store.SystemLog(model.SystemLog{Username: username, Action: "change_password", ClientIP: c.ClientIP(), Result: "success"})
 	c.JSON(200, gin.H{"ok": true})
 }
 

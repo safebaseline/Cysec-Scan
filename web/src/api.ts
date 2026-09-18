@@ -38,6 +38,8 @@ export async function request(path: string, opts: RequestInit = {}): Promise<any
 export const api = {
   login: (username: string, password: string) =>
     request('/api/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
+  changePassword: (oldPassword: string, newPassword: string) =>
+    request('/api/auth/password', { method: 'POST', body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }) }),
   projects: () => request('/api/projects'),
   deleteProject: (id: number) => request(`/api/projects/${id}`, { method: 'DELETE' }),
   createProject: (name: string, description: string) =>
