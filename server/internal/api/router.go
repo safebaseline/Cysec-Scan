@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -648,7 +649,7 @@ func (api *API) getVulnDetail(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "漏洞不存在"})
 		return
 	}
-	c.JSON(200, v)
+	c.JSON(200, localTimeJSON(v))
 }
 
 func (api *API) listServices(c *gin.Context) {
@@ -899,7 +900,7 @@ func (api *API) getTask(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "任务不存在"})
 		return
 	}
-	c.JSON(200, t)
+	c.JSON(200, localTimeJSON(t))
 }
 
 // updateTask 编辑任务参数（仅待执行/已完成/已终止/失败状态可改；运行中与暂停中不可）
@@ -1650,3 +1651,39 @@ func (api *API) testProxy(c *gin.Context) {
 
 var _ = http.StatusOK
 var _ = json.Marshal
+
+// localTimeJSON 将结构体序列化为 JSON，并把 time.Time 的 RFC3339 T..Z 时间
+// 规范为本地 24 小时制串（驱动按 UTC 解析本地墙钟数字，数字即本地时间）
+func localTimeJSON(v any) map[string]any {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return map[string]any{}
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return map[string]any{}
+	}
+	re := regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.\d+)?Z$`)
+	var walk func(x any) any
+	walk = func(x any) any {
+		switch t := x.(type) {
+		case string:
+			if mm := re.FindStringSubmatch(t); mm != nil {
+				return mm[1] + " " + mm[2]
+			}
+			return t
+		case map[string]any:
+			for k, vv := range t {
+				t[k] = walk(vv)
+			}
+			return t
+		case []any:
+			for i, vv := range t {
+				t[i] = walk(vv)
+			}
+			return t
+		}
+		return x
+	}
+	return walk(m).(map[string]any)
+}

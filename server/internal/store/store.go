@@ -388,6 +388,11 @@ func scanMaps(rows *sql.Rows) ([]map[string]any, error) {
 			if b, ok := v.([]byte); ok {
 				v = string(b)
 			}
+			// DATETIME 列经驱动扫描为 time.Time（本地墙钟数字被按 UTC 解析）；
+			// 直接 Format 还原本地数字，避免 JSON 序列化成 T..Z 后前端再加时区
+			if tt, ok := v.(time.Time); ok {
+				v = tt.Format(localTimeFmt)
+			}
 			m[c] = v
 		}
 		out = append(out, m)
