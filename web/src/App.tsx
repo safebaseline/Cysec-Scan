@@ -243,8 +243,10 @@ function Tasks({ pid }: { pid: number }) { const [data, setData] = useState<any>
   const [form, setForm] = useState<any>({ name: '', targets: '', mode: 'standard', ports: '', concurrency: 8, timeout_sec: 5, priority: 5, scan_interval: '' });
   const [editId, setEditId] = useState<number | null>(null); // 非 null 时表单为编辑模式
   const [logs, setLogs] = useState<any[] | null>(null);
+  const [logTaskId, setLogTaskId] = useState<number>(0); // 日志弹窗打开期间每 2 秒自动刷新
   const refresh = () => api.tasks(pid).then(setData).catch(() => undefined);
   useEffect(() => { refresh(); const t = setInterval(refresh, 4000); return () => clearInterval(t); }, [pid]);
+  useEffect(() => { if (!logTaskId) return; const t = setInterval(() => api.taskLogs(logTaskId).then(setLogs).catch(() => undefined), 2000); return () => clearInterval(t); }, [logTaskId]);
   const resetForm = () => { setEditId(null); setForm({ name: '', targets: '', mode: 'standard', ports: '', concurrency: 8, timeout_sec: 5, priority: 5, scan_interval: '' }); };
   const submit = async (e: React.FormEvent) => { e.preventDefault(); try {
       if (editId) { await api.updateTask(editId, form); } else { await api.createTask({ ...form, project_id: pid, target_type: 'ip' }); }
@@ -272,9 +274,9 @@ function Tasks({ pid }: { pid: number }) { const [data, setData] = useState<any>
         {(t.status === 'running' || t.status === 'pending' || t.status === 'paused') && <button onClick={() => api.taskAction(t.id, 'cancel').then(refresh)}>终止</button>}
         {['done', 'failed', 'canceled'].includes(t.status) && <button onClick={() => api.taskRun(t.id).then(refresh).catch((e: any) => alert(e.message))}>重启</button>}
         {['done', 'failed', 'canceled'].includes(t.status) && <button onClick={() => startEdit(t)}>编辑</button>}
-        <button onClick={() => api.taskLogs(t.id).then(setLogs)}>日志</button>
+        <button onClick={() => { setLogTaskId(t.id); api.taskLogs(t.id).then(setLogs); }}>日志</button>
         <button onClick={async () => { if (await askConfirm("删除任务 #" + t.id + "？")) api.taskDelete(t.id).then(refresh); }}>删除</button></span>)} /></Card>
-    {logs && (<div className="modal" onClick={() => setLogs(null)}><div className="modal-body" onClick={(e) => e.stopPropagation()}>
+    {logs && (<div className="modal" onClick={() => { setLogs(null); setLogTaskId(0); }}><div className="modal-body" onClick={(e) => e.stopPropagation()}>
       <div className="modal-head"><h3>日志</h3><button onClick={() => setLogs(null)}>关闭</button></div>
       <pre className="logs">{logs.map((l: any) => `[${fmtTime(l.created_at)}] ${l.message}`).join('\n')}</pre></div></div>)}</div>); }
 

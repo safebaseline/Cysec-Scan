@@ -151,3 +151,27 @@ func TestParseTargetsCIDRLimit(t *testing.T) {
 		t.Fatal("超大 CIDR 应报错")
 	}
 }
+
+func TestParseTargetsHyphenDomain(t *testing.T) {
+	// 含连字符的域名不能被 IP 段分支吞掉
+	ips, domains, _, err := ParseTargets("my-site.example.com\ntest-0.example.com\n1.2.3.4", "ip", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ips) != 1 || ips[0] != "1.2.3.4" {
+		t.Fatalf("IP 解析错误: %v", ips)
+	}
+	if len(domains) != 2 {
+		t.Fatalf("连字符域名被丢弃: %v", domains)
+	}
+	// 真正的 IP 段仍正常
+	ips2, _, _, _ := ParseTargets("10.0.0.1-10.0.0.3", "ip", 100)
+	if len(ips2) != 3 {
+		t.Fatalf("IP 段解析错误: %v", ips2)
+	}
+	// 前半不是 IP 的含连字符串按域名处理（若域名合法）
+	_, domains3, _, _ := ParseTargets("a-b.example.com", "ip", 100)
+	if len(domains3) != 1 {
+		t.Fatalf("a-b 域名解析错误: %v", domains3)
+	}
+}

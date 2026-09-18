@@ -886,6 +886,12 @@ func (api *API) runTask(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "任务处于暂停状态，请先恢复或终止"})
 		return
 	}
+	// 旧执行协程仍在运行时直接重入队会被引擎防重入守卫静默丢弃（状态卡 pending），
+	// 先取消并等待其退出（限时 30 秒），仍退不出则拒绝重启
+	if api.engine.IsRunning(id) && !api.engine.StopAndWait(id, 30*time.Second) {
+		c.JSON(409, gin.H{"error": "上一次执行仍在收尾（大批量目标收尾较慢），请稍后重试重启"})
+		return
+	}
 	if err := api.store.RequeueTask(id); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return

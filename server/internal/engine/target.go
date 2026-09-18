@@ -56,11 +56,13 @@ func ParseTargets(text, targetType string, maxTargets int) ([]string, []string, 
 				ips = appendIfNew(ips, e)
 				count++
 			}
-		case strings.Contains(line, "-"): // IP 段 a.b.c.d-a.b.c.e
+		case strings.Contains(line, "-") && net.ParseIP(strings.SplitN(line, "-", 2)[0]) != nil: // IP 段 a.b.c.d-a.b.c.e
+			// 前半段必须是合法 IP 才视为 IP 段；否则落到域名分支（域名可含连字符，
+			// 如 my-site.com，此前在此被静默丢弃）
 			parts := strings.SplitN(line, "-", 2)
 			start := net.ParseIP(strings.TrimSpace(parts[0]))
 			end := net.ParseIP(strings.TrimSpace(parts[1]))
-			if start == nil || end == nil {
+			if end == nil {
 				continue
 			}
 			n := 0

@@ -28,11 +28,11 @@ type Engine struct {
 	store *store.Store
 	cfg   *config.Config
 
-	mu            sync.Mutex
-	running       map[int64]*taskRun // taskID -> 运行状态
-	queue         chan int64
-	stopPoll      chan struct{}
-	autoScanQueue   chan autoScanJob // 新增 Web 资产实时漏洞扫描队列（nil 表示未启用）
+	mu              sync.Mutex
+	running         map[int64]*taskRun // taskID -> 运行状态
+	queue           chan int64
+	stopPoll        chan struct{}
+	autoScanQueue   chan autoScanJob  // 新增 Web 资产实时漏洞扫描队列（nil 表示未启用）
 	aiQueue         chan aiAnalyzeJob // 新增漏洞实时 AI 研判队列（nil 表示未启用）
 	nucleiScanQueue chan autoScanJob  // 新 Web 资产官方 nuclei 引擎实时扫描队列（nil 表示未启用）
 }
@@ -127,6 +127,29 @@ func (e *Engine) pollLoop() {
 	}
 }
 
+// IsRunning 判断任务是否存在存活执行协程
+func (e *Engine) IsRunning(taskID int64) bool {
+	e.mu.Lock()
+	_, ok := e.running[taskID]
+	e.mu.Unlock()
+	return ok
+}
+
+// StopAndWait 取消任务的存活执行并等待其退出（限时）。
+// 修复重启竞态：旧执行协程未退出时，新 Execute 会被防重入守卫静默丢弃，
+// 任务状态将卡在 pending；重启前必须先让旧执行真正结束。
+func (e *Engine) StopAndWait(taskID int64, timeout time.Duration) bool {
+	_ = e.Cancel(taskID)
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if !e.IsRunning(taskID) {
+			return true
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return !e.IsRunning(taskID)
+}
+
 // Submit 提交任务（状态 pending，由 pollLoop 调度）
 func (e *Engine) Submit(taskID int64) error {
 	return e.store.UpdateTask(taskID, map[string]any{"status": "pending", "progress": 0})
@@ -167,29 +190,58 @@ func (e *Engine) Execute(taskID int64) {
 	}
 	e.store.LogTask(taskID, "info", fmt.Sprintf("目标解析完成: %d IP, %d Domain, %d URL", len(ips), len(domains), len(urls)))
 
-	// 域名解析 -> IP
+	// 域名解析 -> IP（并发：大批量域名目标串行解析需数小时，限定 32 worker）
 	authorized := map[string]bool{}
 	for _, ip := range ips {
 		authorized[ip] = true
 	}
-	for _, d := range domains {
-		e.upsertDomain(task, d, "")
-		for _, r := range plugins.AllResolvers() {
-			if ip, cname, err := r.Resolve(d); err == nil && ip != "" {
-				if !isAuthorized(ip, authorized, ips) {
-					// 仅当解析 IP 落在任务授权的 IP 范围内才纳入；否则仅记录解析关系
-					e.upsertDomain(task, d, ip)
-					e.store.LogTask(taskID, "info", "域名 "+d+" 解析到 "+ip+"（未授权范围，仅记录关联）")
-				} else {
-					e.upsertDomain(task, d, ip)
-					ips = appendIfNew(ips, ip)
+	var ipsMu sync.Mutex
+	domainJobs := make(chan string)
+	var dwg sync.WaitGroup
+	for w := 0; w < 32; w++ {
+		dwg.Add(1)
+		go func() {
+			defer dwg.Done()
+			for d := range domainJobs {
+				select {
+				case <-runCancel(e, task.ID):
+					continue
+				default:
 				}
-				if cname != "" {
-					e.store.Exec(`UPDATE asset_domains SET cname=? WHERE project_id=? AND domain=?`, cname, task.ProjectID, d)
+				e.upsertDomain(task, d, "")
+				for _, r := range plugins.AllResolvers() {
+					if ip, cname, err := r.Resolve(d); err == nil && ip != "" {
+						ipsMu.Lock()
+						inRange := isAuthorized(ip, authorized, ips)
+						if inRange {
+							ips = appendIfNew(ips, ip)
+						}
+						ipsMu.Unlock()
+						// 仅当解析 IP 落在任务授权的 IP 范围内才纳入；否则仅记录解析关系
+						e.upsertDomain(task, d, ip)
+						if !inRange {
+							e.store.LogTask(taskID, "info", "域名 "+d+" 解析到 "+ip+"（未授权范围，仅记录关联）")
+						}
+						if cname != "" {
+							e.store.Exec(`UPDATE asset_domains SET cname=? WHERE project_id=? AND domain=?`, cname, task.ProjectID, d)
+						}
+						break
+					}
 				}
-				break
 			}
-		}
+		}()
+	}
+	for _, d := range domains {
+		domainJobs <- d
+	}
+	close(domainJobs)
+	dwg.Wait()
+	select {
+	case <-runCancel(e, task.ID):
+		e.store.UpdateTask(taskID, map[string]any{"status": "canceled", "progress": 0, "ended_at": store.NowLocal()})
+		e.store.LogTask(taskID, "info", "任务结束: canceled")
+		return
+	default:
 	}
 	// 子域名收集（爆破 + 证书透明度）；任务域名与收集到的子域名随后按 https/http 探测为 Web 资产
 	webDomains := append([]string{}, domains...)
@@ -272,7 +324,6 @@ func (e *Engine) Execute(taskID int64) {
 
 	// 注：新增 Web 资产的默认漏洞扫描已由实时扫描器（autoscan）承担——
 	// 快速模式任务在 detectWeb 发现新资产时即提交异步扫描，覆盖全部来源，无需任务末补扫
-
 
 	// 风险评分
 	e.scoreIPs(task.ProjectID, ips)
@@ -630,8 +681,8 @@ func (e *Engine) probeDomainPortWebs(task *model.ScanTask, names []string) {
 	}
 	ipMap := e.store.DomainIPMap(task.ProjectID, list)
 	type job struct {
-		name string
-		port int
+		name  string
+		port  int
 		https bool
 	}
 	jobs := []job{}
@@ -713,7 +764,6 @@ func isWebPort(port int, service string) bool {
 	}
 	return false
 }
-
 
 // spaceMapping 空间测绘：对所有 IP 与域名目标查询已启用的测绘数据源并导入结果，返回扩展后的 IP 列表
 func (e *Engine) spaceMapping(task *model.ScanTask, ips, domains []string) []string {
