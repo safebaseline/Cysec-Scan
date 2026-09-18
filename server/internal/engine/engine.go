@@ -211,17 +211,13 @@ func (e *Engine) Execute(taskID int64) {
 				e.upsertDomain(task, d, "")
 				for _, r := range plugins.AllResolvers() {
 					if ip, cname, err := r.Resolve(d); err == nil && ip != "" {
+						// 目标域名是用户显式指定的扫描对象，其解析 IP 一律纳入授权范围，
+						// 加入 IP 列表参与后续端口扫描与资产收集
 						ipsMu.Lock()
-						inRange := isAuthorized(ip, authorized, ips)
-						if inRange {
-							ips = appendIfNew(ips, ip)
-						}
+						ips = appendIfNew(ips, ip)
 						ipsMu.Unlock()
-						// 仅当解析 IP 落在任务授权的 IP 范围内才纳入；否则仅记录解析关系
 						e.upsertDomain(task, d, ip)
-						if !inRange {
-							e.store.LogTask(taskID, "info", "域名 "+d+" 解析到 "+ip+"（未授权范围，仅记录关联）")
-						}
+						e.store.LogTask(taskID, "info", "域名 "+d+" 解析到 "+ip+"（目标域名，已纳入扫描）")
 						if cname != "" {
 							e.store.Exec(`UPDATE asset_domains SET cname=? WHERE project_id=? AND domain=?`, cname, task.ProjectID, d)
 						}
