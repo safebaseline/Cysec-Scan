@@ -168,6 +168,31 @@ func init() { plugins.RegisterMapper(&FOFAProvider{}) }
 可扩展点：`Prober`（存活）、`PortScanner`（端口）、`ServiceIdentifier`（服务）、
 `DomainResolver`（DNS）、`SpaceMapper`（空间测绘数据源）、`Fingerprinter`（指纹）、`RiskScanner`（风险）。
 
+## 致谢 / 引用项目
+
+本平台的实现直接引用或设计借鉴了以下优秀的开源项目（按引用方式分类）：
+
+### 引擎与库（代码级引用）
+
+| 项目 | 许可证 | 引用方式 |
+|---|---|---|
+| [projectdiscovery/nuclei](https://github.com/projectdiscovery/nuclei) | MIT | **漏洞扫描引擎**：内嵌 v3 引擎库（`lib` SDK），nuclei 源规则全部经官方引擎执行，匹配语义与 nuclei CLI 一致；其 DSL 引擎亦是本平台自研 DSL 求值器的设计参考 |
+| [ifacker/WIHscan](https://github.com/ifacker/WIHscan) | MIT | **WIH JS 敏感信息检测**：默认 15 条检测规则（云 AK/SK、JWT、Webhook 等）逐条移植，排除规则机制与 `-u` 单目标检测模式对应实现 |
+| [dlclark/regexp2](https://github.com/dlclark/regexp2) | MIT | WIH 规则正则执行器（支持环视等高级语法，兼容 WIH 生态规则） |
+| [boy-hack/ksubdomain](https://github.com/boy-hack/ksubdomain) | - | **子域名爆破**设计参考：高并发 DNS 查询 + 字典 + 泛解析检测过滤 + 多解析器轮询（自研实现） |
+| [projectdiscovery/interactsh](https://github.com/projectdiscovery/interactsh) | MIT | **OOB 反连检测**设计参考：单会话注册多子域复用、客户端轮询策略（自研兼容服务端） |
+| nuclei-poc-main 脚本集（GitHub，具体仓库已不可考） | - | **模板源管理**设计参考：每日自动更新、克隆去重、镜像前缀重试等策略（对应其 `daily-run.yml` 与 `1-clone_repos.py` / `4-remove_duplicated.py` 脚本思路） |
+
+### 规则格式兼容
+
+漏洞规则库兼容以下三种主流 PoC 格式，导入时自动识别：
+
+- [nuclei 模板](https://github.com/projectdiscovery/nuclei-templates)（projectdiscovery 官方模板库）
+- [xray POC](https://github.com/chaitin/xray)（CEL 表达式格式，长亭科技）
+- [afrog POC](https://github.com/zan8in/afrog)（set 变量格式）
+
+> 感谢以上项目的作者与社区。若引用方式或出处标注有误，请提交 issue 指正。
+
 ## 文档
 
 - [API 文档](docs/API.md)
