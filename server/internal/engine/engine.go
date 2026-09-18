@@ -152,9 +152,7 @@ func (e *Engine) Execute(taskID int64) {
 	if err != nil {
 		return
 	}
-	runStart := time.Now()
-	now := runStart
-	e.store.UpdateTask(taskID, map[string]any{"status": "running", "started_at": now})
+	e.store.UpdateTask(taskID, map[string]any{"status": "running", "started_at": store.NowLocal()})
 	e.store.LogTask(taskID, "info", "任务开始执行，模式="+task.Mode)
 	if netproxy.Enabled() {
 		e.store.LogTask(taskID, "info", "全局代理已启用：Web 探测与漏洞扫描走代理，端口扫描/服务识别走直连")
@@ -163,7 +161,7 @@ func (e *Engine) Execute(taskID int64) {
 	// 目标解析（授权范围）
 	ips, domains, urls, err := ParseTargets(task.Targets, task.TargetType, e.cfg.Scan.MaxTargetsPerTask)
 	if err != nil {
-		e.store.UpdateTask(taskID, map[string]any{"status": "failed", "error": err.Error(), "ended_at": time.Now()})
+		e.store.UpdateTask(taskID, map[string]any{"status": "failed", "error": err.Error(), "ended_at": store.NowLocal()})
 		e.store.LogTask(taskID, "error", "目标解析失败: "+err.Error())
 		return
 	}
@@ -287,7 +285,7 @@ func (e *Engine) Execute(taskID int64) {
 	default:
 	}
 	e.mu.Unlock()
-	e.store.UpdateTask(taskID, map[string]any{"status": status, "progress": 100, "ended_at": time.Now()})
+	e.store.UpdateTask(taskID, map[string]any{"status": status, "progress": 100, "ended_at": store.NowLocal()})
 	e.store.LogTask(taskID, "info", "任务结束: "+status)
 }
 
@@ -980,7 +978,7 @@ func (e *Engine) Cancel(taskID int64) error {
 		}
 	}
 	e.mu.Unlock()
-	return e.store.UpdateTask(taskID, map[string]any{"status": "canceled", "ended_at": time.Now()})
+	return e.store.UpdateTask(taskID, map[string]any{"status": "canceled", "ended_at": store.NowLocal()})
 }
 
 func (e *Engine) waitIfPaused(run *taskRun) bool {

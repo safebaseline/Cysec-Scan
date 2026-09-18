@@ -28,7 +28,8 @@ function Table({ cols, rows, onRow, actions }: { cols: string[]; rows: any[]; on
 // 展示为本地时区 24 小时制（浏览器时区，即中国时区环境显示北京时间）；解析失败原样返回
 function fmtTime(s: any): string {
   if (typeof s !== 'string' || !s) return s;
-  const t = new Date(s.includes('T') ? s : s.replace(' ', 'T') + 'Z');
+  if (!s.includes('T')) return s; // 后端已存中国时区 24 小时制，直接展示
+  const t = new Date(s); // 兼容历史 time.Time 带偏移格式：规范为本地 24 小时制
   if (isNaN(t.getTime())) return s;
   const p = (n: number) => String(n).padStart(2, '0');
   return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}:${p(t.getSeconds())}`;

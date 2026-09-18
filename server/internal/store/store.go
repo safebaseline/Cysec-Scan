@@ -75,7 +75,55 @@ func (s *Store) migrate() error {
 	s.db.Exec(`ALTER TABLE vulnerabilities ADD COLUMN response TEXT DEFAULT ''`)
 	s.db.Exec(`ALTER TABLE vulnerabilities ADD COLUMN mark TEXT DEFAULT ''`) // confirmed/false_positive/ignored
 	s.backfillVulnPackets()
+	s.migrateTimestampsToLocal()
 	return nil
+}
+
+// migrateTimestampsToLocal 存量时间戳统一为中国时区 24 小时制。历史数据混存两种格式：
+// 1) SQLite CURRENT_TIMESTAMP 写入的 UTC 串 "YYYY-MM-DD HH:MM:SS" —— 统一 +8 小时；
+// 2) Go time.Time 写入的本地带偏移 ISO 串 "YYYY-MM-DDTHH:MM:SS...+08:00" —— 去偏移规范为本地串。
+// tokens.expires_at 为内部过期比对字段（time.Time 往返），不参与迁移。
+// 幂等：settings 键 tz_local=1 标记只跑一次。
+func (s *Store) migrateTimestampsToLocal() {
+	if flag, _ := s.GetSetting("tz_local"); strings.TrimSpace(flag) == "1" {
+		return
+	}
+	// 普通列：全部为 UTC 串或空
+	utcCols := [][2]string{
+		{"scan_logs", "created_at"}, {"asset_changes", "created_at"}, {"system_logs", "created_at"},
+		{"users", "created_at"}, {"projects", "created_at"}, {"scan_tasks", "created_at"},
+		{"vulnerabilities", "first_seen"}, {"vulnerabilities", "last_seen"},
+		{"asset_ips", "first_seen"}, {"asset_domains", "first_seen"}, {"asset_ports", "first_seen"},
+		{"asset_web", "first_seen"}, {"asset_urls", "first_seen"}, {"asset_fingerprints", "first_seen"},
+	}
+	// 混存列：started_at/ended_at/last_probe 历史上由 time.Time 写入（ISO+偏移）
+	mixedCols := [][2]string{
+		{"scan_tasks", "started_at"}, {"scan_tasks", "ended_at"}, {"asset_ips", "last_probe"},
+	}
+	total := int64(0)
+	run := func(q string, args ...any) {
+		if res, err := s.db.Exec(q, args...); err == nil {
+			if n, _ := res.RowsAffected(); n > 0 {
+				total += n
+			}
+		}
+	}
+	for _, c := range utcCols {
+		run(fmt.Sprintf(`UPDATE %s SET %s = datetime(%s, '+8 hours')
+			WHERE %s IS NOT NULL AND %s != '' AND %s NOT LIKE '%%T%%'`, c[0], c[1], c[1], c[1], c[1], c[1]))
+	}
+	for _, c := range mixedCols {
+		// ISO 带偏移（本地墙钟）-> 去偏移规范
+		run(fmt.Sprintf(`UPDATE %s SET %s = substr(replace(%s, 'T', ' '), 1, 19)
+			WHERE %s IS NOT NULL AND %s LIKE '%%T%%'`, c[0], c[1], c[1], c[1], c[1]))
+		// UTC 串 -> +8
+		run(fmt.Sprintf(`UPDATE %s SET %s = datetime(%s, '+8 hours')
+			WHERE %s IS NOT NULL AND %s != '' AND %s NOT LIKE '%%T%%'`, c[0], c[1], c[1], c[1], c[1], c[1]))
+	}
+	s.SetSetting("tz_local", "1")
+	if total > 0 {
+		log.Printf("[迁移] 时间戳已统一为中国时区（UTC+8）24 小时制，共更新 %d 行", total)
+	}
 }
 
 // backfillVulnPackets 存量修复：早期版本部分 nuclei 漏洞（多请求链/interactsh 模板）报文为空，
@@ -374,7 +422,7 @@ func timeParse(v sql.NullString) time.Time {
 }
 
 func (s *Store) CreateUser(u *model.User) error {
-	_, err := s.db.Exec(`INSERT INTO users(username,password,role) VALUES(?,?,?)`, u.Username, u.Password, u.Role)
+	_, err := s.db.Exec(`INSERT INTO users(username,password,role,created_at) VALUES(?,?,?,?)`, u.Username, u.Password, u.Role, NowLocal())
 	return err
 }
 
@@ -409,7 +457,7 @@ func (s *Store) DeleteToken(token string) error {
 // ---------- 项目 ----------
 
 func (s *Store) CreateProject(p *model.Project) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO projects(name,description) VALUES(?,?)`, p.Name, p.Description)
+	res, err := s.db.Exec(`INSERT INTO projects(name,description,created_at) VALUES(?,?,?)`, p.Name, p.Description, NowLocal())
 	if err != nil {
 		return 0, err
 	}
@@ -470,8 +518,8 @@ func (s *Store) GetProject(id int64) (map[string]any, error) {
 // ---------- 资产 Upsert（去重核心） ----------
 
 func (s *Store) UpsertIP(a model.AssetIP) (bool, error) { // returns isNew
-	res, err := s.db.Exec(`INSERT INTO asset_ips(project_id,ip,network,source) VALUES(?,?,?,?)
-		ON CONFLICT(project_id,ip) DO NOTHING`, a.ProjectID, a.IP, a.Network, a.Source)
+	res, err := s.db.Exec(`INSERT INTO asset_ips(project_id,ip,network,source,first_seen) VALUES(?,?,?,?,?)
+		ON CONFLICT(project_id,ip) DO NOTHING`, a.ProjectID, a.IP, a.Network, a.Source, NowLocal())
 	if err != nil {
 		return false, err
 	}
@@ -481,7 +529,7 @@ func (s *Store) UpsertIP(a model.AssetIP) (bool, error) { // returns isNew
 
 func (s *Store) UpdateIPAlive(ip string, projectID int64, alive bool, method string, latency int64) error {
 	_, err := s.db.Exec(`UPDATE asset_ips SET alive=?,probe_method=?,latency_ms=?,last_probe=? WHERE project_id=? AND ip=?`,
-		alive, method, latency, time.Now(), projectID, ip)
+		alive, method, latency, NowLocal(), projectID, ip)
 	return err
 }
 
@@ -534,8 +582,8 @@ func (s *Store) OpenPortServices(projectID int64, ip string) []model.AssetPort {
 }
 
 func (s *Store) UpsertDomain(d model.AssetDomain) (bool, error) {
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO asset_domains(project_id,domain,cname,ip,source) VALUES(?,?,?,?,?)`,
-		d.ProjectID, d.Domain, d.CNAME, d.IP, d.Source)
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO asset_domains(project_id,domain,cname,ip,source,first_seen) VALUES(?,?,?,?,?,?)`,
+		d.ProjectID, d.Domain, d.CNAME, d.IP, d.Source, NowLocal())
 	if err != nil {
 		return false, err
 	}
@@ -547,9 +595,8 @@ func (s *Store) UpsertDomain(d model.AssetDomain) (bool, error) {
 }
 
 func (s *Store) UpsertPort(p model.AssetPort) (bool, error) {
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO asset_ports(project_id,ip,port,protocol,state,service,version,banner,category,source)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		p.ProjectID, p.IP, p.Port, p.Protocol, p.State, p.Service, p.Version, p.Banner, p.Category, p.Source)
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO asset_ports(project_id,ip,port,protocol,state,service,version,banner,category,source,first_seen) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		p.ProjectID, p.IP, p.Port, p.Protocol, p.State, p.Service, p.Version, p.Banner, p.Category, p.Source, NowLocal())
 	if err != nil {
 		return false, err
 	}
@@ -562,9 +609,8 @@ func (s *Store) UpsertPort(p model.AssetPort) (bool, error) {
 }
 
 func (s *Store) UpsertWeb(w model.AssetWeb) (int64, bool, error) {
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO asset_web(project_id,url,ip,domain,port,protocol,status_code,title,server,content_type,resp_size,certificate,headers,tech,source)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		w.ProjectID, w.URL, w.IP, w.Domain, w.Port, w.Protocol, w.StatusCode, w.Title, w.Server, w.ContentType, w.RespSize, w.Certificate, w.Headers, w.Tech, w.Source)
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO asset_web(project_id,url,ip,domain,port,protocol,status_code,title,server,content_type,resp_size,certificate,headers,tech,source,first_seen) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		w.ProjectID, w.URL, w.IP, w.Domain, w.Port, w.Protocol, w.StatusCode, w.Title, w.Server, w.ContentType, w.RespSize, w.Certificate, w.Headers, w.Tech, w.Source, NowLocal())
 	if err != nil {
 		return 0, false, err
 	}
@@ -581,9 +627,8 @@ func (s *Store) UpsertWeb(w model.AssetWeb) (int64, bool, error) {
 }
 
 func (s *Store) UpsertURL(u model.AssetURL) (bool, error) {
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO asset_urls(project_id,web_id,url,method,status_code,content_type,resp_size,source)
-		VALUES(?,?,?,?,?,?,?,?)`,
-		u.ProjectID, u.WebID, u.URL, u.Method, u.StatusCode, u.ContentType, u.RespSize, u.Source)
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO asset_urls(project_id,web_id,url,method,status_code,content_type,resp_size,source,first_seen) VALUES(?,?,?,?,?,?,?,?,?)`,
+		u.ProjectID, u.WebID, u.URL, u.Method, u.StatusCode, u.ContentType, u.RespSize, u.Source, NowLocal())
 	if err != nil {
 		return false, err
 	}
@@ -596,17 +641,16 @@ func (s *Store) UpsertURL(u model.AssetURL) (bool, error) {
 }
 
 func (s *Store) UpsertFingerprint(f model.AssetFingerprint) error {
-	_, err := s.db.Exec(`INSERT OR IGNORE INTO asset_fingerprints(project_id,web_url,category,name,detail) VALUES(?,?,?,?,?)`,
-		f.ProjectID, f.WebURL, f.Category, f.Name, f.Detail)
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO asset_fingerprints(project_id,web_url,category,name,detail,first_seen) VALUES(?,?,?,?,?,?)`,
+		f.ProjectID, f.WebURL, f.Category, f.Name, f.Detail, NowLocal())
 	return err
 }
 
 // UpsertVuln 漏洞去重: 资产+端口+URL+漏洞ID
 // UpsertVuln 漏洞统一入库去重（资产+端口+URL+漏洞ID），返回（库内 ID，是否新增）
 func (s *Store) UpsertVuln(v model.Vulnerability) (int64, bool, error) {
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO vulnerabilities(project_id,vuln_id,name,severity,ip,domain,port,url,service,component,description,solution,evidence,request,response,scanner)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		v.ProjectID, v.VulnID, v.Name, v.Severity, v.IP, v.Domain, v.Port, v.URL, v.Service, v.Component, v.Description, v.Solution, v.Evidence, v.Request, v.Response, v.Scanner)
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO vulnerabilities(project_id,vuln_id,name,severity,ip,domain,port,url,service,component,description,solution,evidence,request,response,scanner,first_seen,last_seen) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		v.ProjectID, v.VulnID, v.Name, v.Severity, v.IP, v.Domain, v.Port, v.URL, v.Service, v.Component, v.Description, v.Solution, v.Evidence, v.Request, v.Response, v.Scanner, NowLocal(), NowLocal())
 	if err != nil {
 		return 0, false, err
 	}
@@ -614,8 +658,8 @@ func (s *Store) UpsertVuln(v model.Vulnerability) (int64, bool, error) {
 		id, _ := res.LastInsertId()
 		return id, true, nil
 	}
-	_, err = s.db.Exec(`UPDATE vulnerabilities SET last_seen=CURRENT_TIMESTAMP, evidence=?, request=?, response=? WHERE project_id=? AND ip=? AND port=? AND url=? AND vuln_id=?`,
-		v.Evidence, v.Request, v.Response, v.ProjectID, v.IP, v.Port, v.URL, v.VulnID)
+	_, err = s.db.Exec(`UPDATE vulnerabilities SET last_seen=?, evidence=?, request=?, response=? WHERE project_id=? AND ip=? AND port=? AND url=? AND vuln_id=?`,
+		NowLocal(), v.Evidence, v.Request, v.Response, v.ProjectID, v.IP, v.Port, v.URL, v.VulnID)
 	if err != nil {
 		return 0, false, err
 	}
@@ -642,9 +686,9 @@ func (s *Store) GetVulnerability(id int64) (*model.Vulnerability, error) {
 // ---------- 任务 ----------
 
 func (s *Store) CreateTask(t *model.ScanTask) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO scan_tasks(project_id,name,mode,targets,target_type,ports,status,concurrency,timeout_sec,priority,cron_expr,created_by,scan_interval)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		t.ProjectID, t.Name, t.Mode, t.Targets, t.TargetType, t.Ports, "pending", t.Concurrency, t.TimeoutSec, t.Priority, t.CronExpr, t.CreatedBy, t.ScanInterval)
+	res, err := s.db.Exec(`INSERT INTO scan_tasks(project_id,name,mode,targets,target_type,ports,status,concurrency,timeout_sec,priority,cron_expr,created_by,scan_interval,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		t.ProjectID, t.Name, t.Mode, t.Targets, t.TargetType, t.Ports, "pending", t.Concurrency, t.TimeoutSec, t.Priority, t.CronExpr, t.CreatedBy, t.ScanInterval, NowLocal())
 	if err != nil {
 		return 0, err
 	}
@@ -718,7 +762,7 @@ func (s *Store) LogTask(taskID int64, level, msg string) {
 	if taskID <= 0 {
 		return // 实时扫描等合成任务不落任务日志
 	}
-	s.db.Exec(`INSERT INTO scan_logs(task_id,level,message) VALUES(?,?,?)`, taskID, level, msg)
+	s.db.Exec(`INSERT INTO scan_logs(task_id,level,message,created_at) VALUES(?,?,?,?)`, taskID, level, msg, NowLocal())
 }
 
 func (s *Store) TaskLogs(taskID int64, limit int) ([]map[string]any, error) {
@@ -731,8 +775,8 @@ func (s *Store) TaskLogs(taskID int64, limit int) ([]map[string]any, error) {
 }
 
 func (s *Store) AddChange(c model.AssetChange) {
-	s.db.Exec(`INSERT INTO asset_changes(project_id,task_id,asset_type,asset,change,detail) VALUES(?,?,?,?,?,?)`,
-		c.ProjectID, c.TaskID, c.AssetType, c.Asset, c.Change, c.Detail)
+	s.db.Exec(`INSERT INTO asset_changes(project_id,task_id,asset_type,asset,change,detail,created_at) VALUES(?,?,?,?,?,?,?)`,
+		c.ProjectID, c.TaskID, c.AssetType, c.Asset, c.Change, c.Detail, NowLocal())
 }
 
 // RecurringTasks 所有配置了扫描周期的任务
@@ -789,7 +833,7 @@ func (s *Store) ListChanges(projectID int64, limit int) ([]map[string]any, error
 }
 
 func (s *Store) SystemLog(l model.SystemLog) {
-	s.db.Exec(`INSERT INTO system_logs(username,action,object,client_ip,result) VALUES(?,?,?,?,?)`,
+	s.db.Exec(`INSERT INTO system_logs(username,action,object,client_ip,result,created_at) VALUES(?,?,?,?,?,?)`,
 		l.Username, l.Action, l.Object, l.ClientIP, l.Result)
 }
 
