@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"cysec/internal/plugins"
+	"cysec/internal/ua"
 	"cysec/internal/wih"
 )
 
@@ -36,8 +37,8 @@ func (s *wihRiskScanner) Scan(ctx plugins.RiskContext) []plugins.VulnResult {
 				Description: fmt.Sprintf("在 %s 中发现敏感信息：%s（命中内容已截断保存）", source, h.Name),
 				Solution:    "从前端代码/构建产物中移除该敏感信息；已泄露的凭据（AK/SK、Token、密码等）应立即轮换。",
 				Evidence:    h.Match,
-				Request:     "GET " + source,
-				Response:    h.Match,
+				Request:     fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\n\r\n", source, hostOfURL(source), ua.Get()),
+				Response:    fmt.Sprintf("命中内容（截断）:\r\n%s", h.Match),
 				Scanner:     "wih",
 				Component:   "WIH",
 			})
@@ -64,4 +65,16 @@ func looksLikeText(contentType string) bool {
 	ct := strings.ToLower(contentType)
 	return ct == "" || strings.Contains(ct, "javascript") || strings.Contains(ct, "ecmascript") ||
 		strings.Contains(ct, "text/") || strings.Contains(ct, "json") || strings.Contains(ct, "xml")
+}
+
+// hostOfURL 提取 URL 的主机部分（请求报文 Host 头用）
+func hostOfURL(u string) string {
+	s := u
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	if i := strings.IndexAny(s, "/?#"); i >= 0 {
+		s = s[:i]
+	}
+	return s
 }

@@ -141,3 +141,4 @@ func verbosity() nucleilib.VerbosityOptions {
 	}
 	return nucleilib.VerbosityOptions{Silent: true}
 }
+

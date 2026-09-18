@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,7 +74,22 @@ func (s *Store) migrate() error {
 	s.db.Exec(`ALTER TABLE vulnerabilities ADD COLUMN request TEXT DEFAULT ''`)
 	s.db.Exec(`ALTER TABLE vulnerabilities ADD COLUMN response TEXT DEFAULT ''`)
 	s.db.Exec(`ALTER TABLE vulnerabilities ADD COLUMN mark TEXT DEFAULT ''`) // confirmed/false_positive/ignored
+	s.backfillVulnPackets()
 	return nil
+}
+
+// backfillVulnPackets 存量修复：早期版本部分 nuclei 漏洞（多请求链/interactsh 模板）报文为空，
+// 用命中位置重建请求报文摘要并注明，避免前端报文查看为空
+func (s *Store) backfillVulnPackets() {
+	res, err := s.db.Exec(`UPDATE vulnerabilities
+		SET request = 'GET ' || url || ' HTTP/1.1' || CHAR(10) || CHAR(10) || '[注] 原始请求报文未被早期版本引擎保留（多请求链/interactsh 模板），此为重建报文。',
+		    response = '[注] 原始响应报文未被早期版本引擎保留（多请求链/interactsh 模板）。' || CHAR(10) || '命中位置: ' || COALESCE(evidence,'')
+		WHERE COALESCE(request,'')='' AND COALESCE(response,'')='' AND scanner='nuclei-engine'`)
+	if err == nil {
+		if n, _ := res.RowsAffected(); n > 0 {
+			log.Printf("[迁移] 已为 %d 条历史 nuclei 漏洞回填重建报文", n)
+		}
+	}
 }
 
 const schema = `
@@ -517,7 +533,8 @@ func (s *Store) OpenPortServices(projectID int64, ip string) []model.AssetPort {
 	return out
 }
 
-func (s *Store) UpsertDomain(d model.AssetDomain) (bool, error) {	res, err := s.db.Exec(`INSERT OR IGNORE INTO asset_domains(project_id,domain,cname,ip,source) VALUES(?,?,?,?,?)`,
+func (s *Store) UpsertDomain(d model.AssetDomain) (bool, error) {
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO asset_domains(project_id,domain,cname,ip,source) VALUES(?,?,?,?,?)`,
 		d.ProjectID, d.Domain, d.CNAME, d.IP, d.Source)
 	if err != nil {
 		return false, err

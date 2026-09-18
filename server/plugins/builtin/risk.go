@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"cysec/internal/plugins"
+	"cysec/internal/ua"
 )
 
 // 内置风险检测仅保留敏感路径泄露检测（非破坏性 GET 探测）。
@@ -74,6 +75,8 @@ func (s *leakRiskScanner) Scan(ctx plugins.RiskContext) []plugins.VulnResult {
 		}
 		if lp.hit(resp.StatusCode, resp.Body, resp.ContentType) {
 			respDump := fmt.Sprintf("HTTP/1.1 %d\r\nContent-Type: %s\r\n\r\n%s", resp.StatusCode, resp.ContentType, riskTruncate(resp.Body, 4096))
+			reqDump := fmt.Sprintf("GET %s%s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\n\r\n",
+				ctx.Web.URL, lp.path, hostOfWebURL(ctx.Web.URL), ua.Get())
 			out = append(out, plugins.VulnResult{
 				VulnID:      lp.vulnID,
 				Name:        lp.name,
@@ -81,7 +84,7 @@ func (s *leakRiskScanner) Scan(ctx plugins.RiskContext) []plugins.VulnResult {
 				Description: "敏感路径可被未授权访问（HTTP " + fmt.Sprint(resp.StatusCode) + "）。",
 				Solution:    "限制该路径访问权限或从生产环境移除。",
 				Evidence:    "GET " + lp.path + " -> " + fmt.Sprint(resp.StatusCode),
-				Request:     "GET " + ctx.Web.URL + lp.path + " HTTP/1.1",
+				Request:     reqDump,
 				Response:    respDump,
 				Component:   "Web",
 				Scanner:     "builtin",
@@ -96,4 +99,15 @@ func riskTruncate(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+func hostOfWebURL(u string) string {
+	s := u
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	if i := strings.IndexAny(s, "/?#"); i >= 0 {
+		s = s[:i]
+	}
+	return s
 }

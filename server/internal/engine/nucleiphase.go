@@ -11,6 +11,7 @@ import (
 
 	"cysec/internal/model"
 	"cysec/internal/plugins"
+	"cysec/internal/ua"
 	"cysec/internal/vulnrule"
 )
 
@@ -170,6 +171,15 @@ func (e *Engine) runNucleiBatchJobs(jobs []autoScanJob) {
 		if aw := webOf(j); aw != nil {
 			w.IP, w.Domain, w.Port, w.URL = aw.IP, aw.Domain, aw.Port, aw.URL
 		}
+		// 报文兜底：多请求链 / interactsh 匹配等场景官方事件可能缺 request/response，
+		// 重建最小请求报文 + 合成响应摘要，保证前端报文查看不为空
+		req, resp := f.Request, f.Response
+		if strings.TrimSpace(req) == "" {
+			req = rebuildMinimalRequest(f)
+		}
+		if strings.TrimSpace(resp) == "" {
+			resp = rebuildMinimalResponse(f)
+		}
 		e.saveVuln(task, plugins.VulnResult{
 			VulnID:      f.TemplateID,
 			Name:        orDefaultStr(f.Name, f.TemplateID),
@@ -177,8 +187,8 @@ func (e *Engine) runNucleiBatchJobs(jobs []autoScanJob) {
 			Description: f.Description,
 			Solution:    "参考模板修复建议: " + f.TemplateID,
 			Evidence:    orDefaultStr(f.MatchedAt, f.URL),
-			Request:     f.Request,
-			Response:    f.Response,
+			Request:     req,
+			Response:    resp,
 			Component:   "规则库(nuclei)",
 			Scanner:     "nuclei-engine",
 		}, w)
@@ -294,4 +304,51 @@ func normalizeWebKey(u string) string {
 func atoiOrZero(s string) int {
 	n, _ := strconv.Atoi(strings.TrimSpace(s))
 	return n
+}
+
+// rebuildMinimalRequest 重建最小请求报文（官方事件缺 request 时兜底）：
+// 方法 + 命中 URL + 全局出站头，注明为重建报文
+func rebuildMinimalRequest(f vulnrule.NucleiFinding) string {
+	m := "GET"
+	target := orDefaultStr(f.MatchedAt, f.URL)
+	lower := strings.ToLower(target)
+	if strings.Contains(lower, "post") {
+		m = "POST"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s %s HTTP/1.1\r\n", m, target)
+	fmt.Fprintf(&b, "Host: %s\r\n", hostOfURL(target))
+	for k, v := range ua.CurrentHeaders() {
+		if k == "Host" {
+			continue
+		}
+		fmt.Fprintf(&b, "%s: %s\r\n", k, v)
+	}
+	b.WriteString("\r\n\r\n[注] 原始请求报文未被引擎保留（多请求链/interactsh 模板），此为重建报文。")
+	return b.String()
+}
+
+// rebuildMinimalResponse 合成响应摘要（官方事件缺 response 时兜底）
+func rebuildMinimalResponse(f vulnrule.NucleiFinding) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "[注] 原始响应报文未被引擎保留（多请求链/interactsh 模板）。\r\n\r\n")
+	fmt.Fprintf(&b, "命中位置: %s\r\n", orDefaultStr(f.MatchedAt, f.URL))
+	if f.MatcherName != "" {
+		fmt.Fprintf(&b, "匹配器: %s\r\n", f.MatcherName)
+	}
+	if len(f.Tags) > 0 {
+		fmt.Fprintf(&b, "标签: %s\r\n", f.Tags)
+	}
+	return b.String()
+}
+
+func hostOfURL(u string) string {
+	s := u
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	if i := strings.IndexAny(s, "/?#"); i >= 0 {
+		s = s[:i]
+	}
+	return s
 }
