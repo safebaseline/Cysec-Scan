@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,10 +59,14 @@ func New(st *store.Store, cfg *config.Config) *Engine {
 	return e
 }
 
-// ParseInterval 周期字符串 -> 时长；非法返回 0
-// 支持预设（8h / 24h / 1w）与自定义小时数（如 6h、48h、168h）
+// ParseInterval 周期字符串 -> 时长；非法返回 0。
+// 预设（8h / 24h / 1w）与自定义整数小时 Nh（1 ≤ n ≤ 8760，如 6h）；
+// 自定义周期按小时设计，纯数字（如 6）也按小时解析。
 func ParseInterval(s string) time.Duration {
+	s = strings.TrimSpace(strings.ToLower(s))
 	switch s {
+	case "", "0":
+		return 0
 	case "8h":
 		return 8 * time.Hour
 	case "24h":
@@ -71,14 +74,12 @@ func ParseInterval(s string) time.Duration {
 	case "1w":
 		return 7 * 24 * time.Hour
 	}
-	// 自定义 Nh（1 ≤ n ≤ 8760）
-	if m := regexp.MustCompile(`^(\d{1,4})h$`).FindStringSubmatch(s); m != nil {
-		n, _ := strconv.Atoi(m[1])
-		if n >= 1 && n <= 8760 {
-			return time.Duration(n) * time.Hour
-		}
+	s = strings.TrimSuffix(s, "h") // 纯数字按小时
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 1 || n > 8760 {
+		return 0
 	}
-	return 0
+	return time.Duration(n) * time.Hour
 }
 
 // monitorLoop 资产监控调度：每分钟检查周期任务，上次运行结束 + 周期到期后自动重新排队
