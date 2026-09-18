@@ -436,9 +436,46 @@ func (api *API) setAIConfig(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
+	// 同步写回配置文件（重启后 config.yaml 即为最新）
+	api.writeAIToConfig(cfg)
 	api.store.SystemLog(model.SystemLog{Username: c.GetString("username"), Action: "set_ai_config",
 		Object: cfg.Provider + "/" + cfg.Model, ClientIP: c.ClientIP(), Result: "success"})
 	c.JSON(200, gin.H{"ok": true})
+}
+
+// writeAIToConfig 将 AI 研判配置写回 config.yaml 的 ai 段
+func (api *API) writeAIToConfig(cfg ai.Config) {
+	if api.configPath == "" {
+		return
+	}
+	data, err := os.ReadFile(api.configPath)
+	if err != nil {
+		return
+	}
+	var m map[string]any
+	if err := yaml.Unmarshal(data, &m); err != nil {
+		return
+	}
+	if m == nil {
+		m = map[string]any{}
+	}
+	m["ai"] = map[string]any{
+		"enabled":           cfg.Enabled,
+		"provider":          cfg.Provider,
+		"base_url":          cfg.BaseURL,
+		"api_key":           cfg.APIKey,
+		"model":             cfg.Model,
+		"timeout_sec":       cfg.TimeoutSec,
+		"auto_analyze":      cfg.AutoAnalyze,
+		"auto_min_severity": cfg.AutoMinSeverity,
+	}
+	out, err := yaml.Marshal(m)
+	if err != nil {
+		return
+	}
+	if err := os.WriteFile(api.configPath, out, 0o644); err == nil {
+		log.Printf("[配置] AI 研判设置已写回 %s", api.configPath)
+	}
 }
 
 // aiAnalyzeAll 对项目全部未标记漏洞批量 AI 研判（异步）

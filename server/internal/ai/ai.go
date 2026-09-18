@@ -13,16 +13,16 @@ import (
 
 // Config AI 配置（存 settings 表 key=ai_config）
 type Config struct {
-	Enabled    bool   `json:"enabled"`
-	Provider   string `json:"provider"` // openai / azure / ollama / custom
-	BaseURL    string `json:"base_url"` // API 端点（如 https://api.openai.com/v1）
-	APIKey     string `json:"api_key"`
-	Model      string `json:"model"` // 如 gpt-4o-mini / qwen-plus / deepseek-chat
-	TimeoutSec int    `json:"timeout_sec"`
+	Enabled    bool   `json:"enabled" yaml:"enabled"`
+	Provider   string `json:"provider" yaml:"provider"` // openai / azure / ollama / custom
+	BaseURL    string `json:"base_url" yaml:"base_url"` // API 端点（如 https://api.openai.com/v1）
+	APIKey     string `json:"api_key" yaml:"api_key"`
+	Model      string `json:"model" yaml:"model"` // 如 gpt-4o-mini / qwen-plus / deepseek-chat
+	TimeoutSec int    `json:"timeout_sec" yaml:"timeout_sec"`
 
 	// AI 自动研判（全局）
-	AutoAnalyze     bool   `json:"auto_analyze"`      // 扫描完成后自动对新检出漏洞做 AI 研判
-	AutoMinSeverity string `json:"auto_min_severity"` // 仅对指定等级及以上做自动研判
+	AutoAnalyze     bool   `json:"auto_analyze" yaml:"auto_analyze"`           // 扫描完成后自动对新检出漏洞做 AI 研判
+	AutoMinSeverity string `json:"auto_min_severity" yaml:"auto_min_severity"` // 仅对指定等级及以上做自动研判
 }
 
 // DefaultConfig 默认配置

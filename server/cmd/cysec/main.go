@@ -120,6 +120,14 @@ func main() {
 		log.Fatalf("初始化管理员失败: %v", err)
 	}
 
+	// AI 研判配置：设置表无记录时从 config.yaml 的 ai 段种子（界面保存后以设置表为准并写回 yaml）
+	if saved, _ := st.GetSetting("ai_config"); saved == "" && cfg.AI.BaseURL != "" {
+		if data, err := json.Marshal(cfg.AI); err == nil {
+			st.SetSetting("ai_config", string(data))
+			log.Printf("[初始化] AI 研判配置已从 config.yaml 载入（provider=%s model=%s）", cfg.AI.Provider, cfg.AI.Model)
+		}
+	}
+
 	// WIH JS 敏感信息检测：启动时从库中恢复设置（界面保存后即时生效）
 	if saved, _ := st.GetSetting("wih_settings"); saved != "" {
 		var ws wih.Settings

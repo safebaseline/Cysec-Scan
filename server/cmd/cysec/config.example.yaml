@@ -82,5 +82,16 @@ headers:
     User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.7151.120 Safari/537.36
     # Cookie: "session=xxx"
     # X-Scan-Token: "authorized"
+# AI 研判配置（界面保存后自动写回此处；设置表优先，此处用于首次启动种子）
+ai:
+    enabled: false
+    provider: openai
+    base_url: https://api.openai.com/v1
+    api_key: ""
+    model: gpt-4o-mini
+    timeout_sec: 30
+    auto_analyze: false
+    auto_min_severity: low
+
 worker:
     concurrency: 8
