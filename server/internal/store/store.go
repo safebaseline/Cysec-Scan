@@ -834,7 +834,7 @@ func (s *Store) ListChanges(projectID int64, limit int) ([]map[string]any, error
 
 func (s *Store) SystemLog(l model.SystemLog) {
 	s.db.Exec(`INSERT INTO system_logs(username,action,object,client_ip,result,created_at) VALUES(?,?,?,?,?,?)`,
-		l.Username, l.Action, l.Object, l.ClientIP, l.Result)
+		l.Username, l.Action, l.Object, l.ClientIP, l.Result, NowLocal())
 }
 
 func (s *Store) ListSystemLogs(limit int) ([]map[string]any, error) {
