@@ -22,8 +22,18 @@ function Table({ cols, rows, onRow, actions }: { cols: string[]; rows: any[]; on
   return (<table className="tbl"><thead><tr>{cols.map((c) => <th key={c}>{label(c)}</th>)}{actions && <th style={{ textAlign: 'right' }}>操作</th>}</tr></thead>
     <tbody>{rows.length === 0 && <tr><td colSpan={span} className="empty">暂无数据</td></tr>}
     {rows.map((r, i) => (<tr key={i} onClick={() => onRow?.(r)} className={onRow ? 'clickable' : ''}>
-      {cols.map((k) => { const v = (r as any)[k]; return <td key={k}>{cell(v)}</td>; })}
+      {cols.map((k) => { const v = (r as any)[k]; return <td key={k}>{cell(TIME_COLS.has(k) ? fmtTime(v) : v)}</td>; })}
       {actions && <td className="row-act" onClick={(e) => e.stopPropagation()}>{actions(r)}</td>}</tr>))}</tbody></table>); }
+// fmtTime 时间列展示统一转换：后端存储为 UTC（SQLite CURRENT_TIMESTAMP），
+// 展示为本地时区 24 小时制（浏览器时区，即中国时区环境显示北京时间）；解析失败原样返回
+function fmtTime(s: any): string {
+  if (typeof s !== 'string' || !s) return s;
+  const t = new Date(s.includes('T') ? s : s.replace(' ', 'T') + 'Z');
+  if (isNaN(t.getTime())) return s;
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}:${p(t.getSeconds())}`;
+}
+const TIME_COLS = new Set(['created_at', 'first_seen', 'last_seen', 'started_at', 'ended_at', 'last_probe', 'updated_at']);
 function cell(v: any): ReactNode { if (v === null || v === undefined || v === '') return <span className="muted">-</span>;
   if (typeof v === 'string' && LABEL_MAP[v]) return label(v); if (typeof v === 'boolean') return v ? '✔' : '✘';
   if (typeof v === 'object') return JSON.stringify(v).slice(0, 80); const s = String(v); return s.length > 80 ? s.slice(0, 80) + '…' : s; }
@@ -265,7 +275,7 @@ function Tasks({ pid }: { pid: number }) { const [data, setData] = useState<any>
         <button onClick={async () => { if (await askConfirm("删除任务 #" + t.id + "？")) api.taskDelete(t.id).then(refresh); }}>删除</button></span>)} /></Card>
     {logs && (<div className="modal" onClick={() => setLogs(null)}><div className="modal-body" onClick={(e) => e.stopPropagation()}>
       <div className="modal-head"><h3>日志</h3><button onClick={() => setLogs(null)}>关闭</button></div>
-      <pre className="logs">{logs.map((l: any) => `[${l.created_at}] ${l.message}`).join('\n')}</pre></div></div>)}</div>); }
+      <pre className="logs">{logs.map((l: any) => `[${fmtTime(l.created_at)}] ${l.message}`).join('\n')}</pre></div></div>)}</div>); }
 
 const INTERVAL_LABEL: Record<string, string> = { '8h': '每 8 小时', '24h': '每 24 小时', '1w': '每周' };
 function intervalLabel(iv: string) { return INTERVAL_LABEL[iv] || ('每 ' + iv.replace('h', '') + ' 小时'); }
