@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"net/http/httputil"
 	"strconv"
 	"strings"
 	"time"
 
 	"cysec/internal/model"
+	"cysec/internal/netproxy"
 	"cysec/internal/plugins"
 	"cysec/internal/ua"
 	"cysec/internal/vulnrule"
@@ -171,11 +175,21 @@ func (e *Engine) runNucleiBatchJobs(jobs []autoScanJob) {
 		if aw := webOf(j); aw != nil {
 			w.IP, w.Domain, w.Port, w.URL = aw.IP, aw.Domain, aw.Port, aw.URL
 		}
-		// 报文兜底：多请求链 / interactsh 匹配等场景官方事件可能缺 request/response，
-		// 重建最小请求报文 + 合成响应摘要，保证前端报文查看不为空
+		// 报文兜底：部分场景官方事件不携带 request/response——优先对命中 URL 补抓真实报文，
+		// 补抓失败再退回重建报文，保证前端报文查看不为空
 		req, resp := f.Request, f.Response
+		if strings.TrimSpace(req) == "" || strings.TrimSpace(resp) == "" {
+			if lr, lp := fetchVulnPackets(orDefaultStr(orDefaultStr(f.MatchedAt, f.URL), j.url), maxInt(e.taskFor(j).TimeoutSec, 5)); lr != "" {
+				if strings.TrimSpace(req) == "" {
+					req = lr + "\n[注] 引擎事件未携带报文，此为对目标补抓的真实请求。"
+				}
+				if strings.TrimSpace(resp) == "" && lp != "" {
+					resp = lp
+				}
+			}
+		}
 		if strings.TrimSpace(req) == "" {
-			req = rebuildMinimalRequest(f)
+			req = rebuildMinimalRequest(f, j.url)
 		}
 		if strings.TrimSpace(resp) == "" {
 			resp = rebuildMinimalResponse(f)
@@ -248,6 +262,24 @@ func (e *Engine) ScanAssetsWithNucleiRules(ruleIDs []string, timeoutSec int) int
 		if w == nil {
 			continue
 		}
+		// 报文兜底：事件缺报文时对目标补抓真实请求/响应（失败再走重建）
+		req, resp := f.Request, f.Response
+		if strings.TrimSpace(req) == "" || strings.TrimSpace(resp) == "" {
+			if lr, lp := fetchVulnPackets(orDefaultStr(orDefaultStr(f.MatchedAt, f.URL), w.URL), timeoutSec); lr != "" {
+				if strings.TrimSpace(req) == "" {
+					req = lr + "\n[注] 引擎事件未携带报文，此为对目标补抓的真实请求。"
+				}
+				if strings.TrimSpace(resp) == "" && lp != "" {
+					resp = lp
+				}
+			}
+		}
+		if strings.TrimSpace(req) == "" {
+			req = rebuildMinimalRequest(f, w.URL)
+		}
+		if strings.TrimSpace(resp) == "" {
+			resp = rebuildMinimalResponse(f)
+		}
 		e.saveVuln(&model.ScanTask{ProjectID: w.ProjectID, Mode: "standard", TimeoutSec: timeoutSec}, plugins.VulnResult{
 			VulnID:      f.TemplateID,
 			Name:        orDefaultStr(f.Name, f.TemplateID),
@@ -255,8 +287,8 @@ func (e *Engine) ScanAssetsWithNucleiRules(ruleIDs []string, timeoutSec int) int
 			Description: f.Description,
 			Solution:    "参考模板修复建议: " + f.TemplateID,
 			Evidence:    orDefaultStr(f.MatchedAt, f.URL),
-			Request:     f.Request,
-			Response:    f.Response,
+			Request:     req,
+			Response:    resp,
 			Component:   "POC监控(nuclei)",
 			Scanner:     "nuclei-engine",
 		}, &plugins.WebResult{URL: w.URL, IP: w.IP, Domain: w.Domain, Port: w.Port})
@@ -307,11 +339,33 @@ func atoiOrZero(s string) int {
 	return n
 }
 
-// rebuildMinimalRequest 重建最小请求报文（官方事件缺 request 时兜底）：
-// 方法 + 命中 URL + 全局出站头，注明为重建报文
-func rebuildMinimalRequest(f vulnrule.NucleiFinding) string {
+// fetchVulnPackets 官方事件未携带报文时补抓：对命中 URL 重放一次 GET（走全局代理与全局头），
+// 用 httputil 记录真实收发内容，响应体截取前 64KB。
+func fetchVulnPackets(targetURL string, timeoutSec int) (req, resp string) {
+	if targetURL == "" {
+		return "", ""
+	}
+	rq, err := http.NewRequest("GET", targetURL, nil)
+	if err != nil {
+		return "", ""
+	}
+	ua.Apply(rq)
+	dumpReq, _ := httputil.DumpRequestOut(rq, false)
+	rs, err := netproxy.NewHTTPClient(maxInt(timeoutSec, 5), 0).Do(rq)
+	if err != nil {
+		return string(dumpReq), ""
+	}
+	defer rs.Body.Close()
+	rs.Body = io.NopCloser(io.LimitReader(rs.Body, 64*1024))
+	dumpResp, _ := httputil.DumpResponse(rs, true)
+	return string(dumpReq), string(dumpResp)
+}
+
+// rebuildMinimalRequest 重建最小请求报文（官方事件缺 request 且补抓失败时兜底）：
+// 方法 + 命中 URL + 全局出站头，注明为重建报文；fallbackURL 为任务侧目标（事件 URL 为空时使用）
+func rebuildMinimalRequest(f vulnrule.NucleiFinding, fallbackURL string) string {
 	m := "GET"
-	target := orDefaultStr(f.MatchedAt, f.URL)
+	target := orDefaultStr(orDefaultStr(f.MatchedAt, f.URL), fallbackURL)
 	lower := strings.ToLower(target)
 	if strings.Contains(lower, "post") {
 		m = "POST"
@@ -325,7 +379,7 @@ func rebuildMinimalRequest(f vulnrule.NucleiFinding) string {
 		}
 		fmt.Fprintf(&b, "%s: %s\r\n", k, v)
 	}
-	b.WriteString("\r\n\r\n[注] 原始请求报文未被引擎保留（多请求链/interactsh 模板），此为重建报文。")
+	b.WriteString("\r\n\r\n[注] 原始请求报文未被引擎保留且补抓失败，此为重建报文。")
 	return b.String()
 }
 
