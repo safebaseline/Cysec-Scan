@@ -216,3 +216,23 @@ func TestConfigNormalize(t *testing.T) {
 		t.Fatal("非法 Size 应回退默认 100")
 	}
 }
+
+func TestSynthesizeWebURL(t *testing.T) {
+	cases := []struct {
+		name string
+		rec  Record
+		want string
+	}{
+		{"FOFA纯IP+HTTP服务", Record{IP: "1.2.3.4", Port: 11001, Service: "HTTP"}, "http://1.2.3.4:11001"},
+		{"纯IP+443", Record{IP: "1.2.3.4", Port: 443, Service: "HTTPS"}, "https://1.2.3.4"},
+		{"域名优先", Record{IP: "1.2.3.4", Port: 8443, Domain: "a.example.com", Service: "HTTP"}, "https://a.example.com:8443"},
+		{"服务空但常见Web端口", Record{IP: "1.2.3.4", Port: 8080}, "http://1.2.3.4:8080"},
+		{"非HTTP服务不合成", Record{IP: "1.2.3.4", Port: 3306, Service: "MySQL"}, ""},
+		{"无端口特征不合成", Record{IP: "1.2.3.4", Port: 5555}, ""},
+	}
+	for _, c := range cases {
+		if got := synthesizeWebURL(c.rec); got != c.want {
+			t.Errorf("%s: got %q want %q", c.name, got, c.want)
+		}
+	}
+}

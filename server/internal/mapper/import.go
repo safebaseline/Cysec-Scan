@@ -60,6 +60,11 @@ func Import(st *store.Store, projectID, taskID int64, recs []Record) (newIPs, ne
 			}
 		}
 		// Web 资产 + URL 资产池
+		if r.URL == "" {
+			// 测绘记录未携带 URL（FOFA 纯 IP 记录的 host 字段为空）时按 HTTP 服务特征合成，
+			// 避免"端口已入库而 Web 资产缺失"（Quake/Shodan 解析器自带拼接，此兜底覆盖全部来源）
+			r.URL = synthesizeWebURL(r)
+		}
 		if r.URL != "" {
 			r.URL = NormalizeURL(r.URL, r.Port)
 			webID, isNew, err := st.UpsertWeb(model.AssetWeb{
@@ -84,6 +89,36 @@ func Import(st *store.Store, projectID, taskID int64, recs []Record) (newIPs, ne
 }
 
 // Banner 生成简短 Banner 摘要（便于溯源）
+// commonWebPorts 服务识别未标注 http 时的常见 Web 端口兜底
+var commonWebPorts = map[int]bool{
+	80: true, 443: true, 3000: true, 5000: true, 7001: true, 8000: true, 8080: true,
+	8081: true, 8088: true, 8443: true, 8888: true, 9000: true, 9090: true, 10000: true,
+}
+
+// synthesizeWebURL 记录未携带 URL 时按 HTTP 服务特征合成 http(s)://域名或IP[:端口]；
+// 非 HTTP 特征返回空（不生成 Web 资产）。域名优先（vhost 语义），无域名用 IP。
+func synthesizeWebURL(r Record) string {
+	svc := strings.ToLower(r.Service)
+	if !strings.Contains(svc, "http") && !commonWebPorts[r.Port] {
+		return ""
+	}
+	scheme := "http"
+	if r.Port == 443 || r.Port == 8443 || strings.Contains(svc, "https") {
+		scheme = "https"
+	}
+	host := r.Domain
+	if host == "" {
+		host = r.IP
+	}
+	if host == "" {
+		return ""
+	}
+	if (scheme == "http" && r.Port != 80) || (scheme == "https" && r.Port != 443) {
+		host = fmt.Sprintf("%s:%d", host, r.Port)
+	}
+	return scheme + "://" + host
+}
+
 func (r Record) Banner() string {
 	parts := []string{}
 	if r.Title != "" {
