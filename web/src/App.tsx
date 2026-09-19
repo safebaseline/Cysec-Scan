@@ -614,6 +614,8 @@ const NAV = [['#', '仪表盘'], ['#assets', '资产管理'], ['#vulns', '漏洞
 const GLOBAL_PAGES = ['#rules', '#settings'];
 
 export default function App() { const [logged, setLogged] = useState(!!getToken()); const [projects, setProjects] = useState<Project[]>([]);
+  const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
+  const applyTheme = (t: string) => { setTheme(t); localStorage.setItem('theme', t); document.documentElement.dataset.theme = t; };
   const [pid, setPid] = useState<number>(0); const [hash, setHash] = useState(window.location.hash || '#');
   useEffect(() => { const fn = () => setHash(window.location.hash || '#'); window.addEventListener('hashchange', fn); return () => window.removeEventListener('hashchange', fn); }, []);
   useEffect(() => { if (logged) api.projects().then((ps: Project[]) => { setProjects(ps); const saved = +(localStorage.getItem('pid') || 0); if (ps.length && (!saved || !ps.find((p) => p.id === saved))) setPid(ps[0].id); else if (saved) setPid(saved); }).catch(() => undefined); }, [logged]);
@@ -648,6 +650,11 @@ if (!logged) return <Login onOk={() => setLogged(true)} />;
           </select>
           <button onClick={addProject}>+ 项目</button>
           {pid > 0 && <button onClick={delProject}>删除项目</button>}
+        </div>
+        <div className="theme-switch">
+          {([['dark', '深色'], ['gray', '灰色'], ['light', '浅色']] as [string, string][]).map(([v, l]) => (
+            <button key={v} className={theme === v ? 'active' : ''} onClick={() => applyTheme(v)}>{l}</button>
+          ))}
         </div>
         <nav>
           {NAV.map(([h, label]) => (
