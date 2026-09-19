@@ -22,7 +22,7 @@ function Table({ cols, rows, onRow, actions }: { cols: string[]; rows: any[]; on
   return (<table className="tbl"><thead><tr>{cols.map((c) => <th key={c}>{label(c)}</th>)}{actions && <th style={{ textAlign: 'right' }}>操作</th>}</tr></thead>
     <tbody>{rows.length === 0 && <tr><td colSpan={span} className="empty">暂无数据</td></tr>}
     {rows.map((r, i) => (<tr key={i} onClick={() => onRow?.(r)} className={onRow ? 'clickable' : ''}>
-      {cols.map((k) => { const v = (r as any)[k]; return <td key={k}>{TIME_COLS.has(k) ? cell(fmtTime(v)) : (k === 'status' && STATUS_SET.has(v) ? <span className={`status st-${v}`}>{label(v)}</span> : cell(v))}</td>; })}
+      {cols.map((k) => { const v = (r as any)[k]; return <td key={k}>{TIME_COLS.has(k) ? cell(fmtTime(v)) : (k === 'status' && STATUS_SET.has(v) ? <span className={`status st-${v}`}>{label(v)}</span> : (k === 'severity' && SEV_CLASS[v] ? <SevTag sev={v} /> : cell(v)))}</td>; })}
       {actions && <td className="row-act" onClick={(e) => e.stopPropagation()}>{actions(r)}</td>}</tr>))}</tbody></table>); }
 // fmtTime 时间列展示统一转换：后端存储为 UTC（SQLite CURRENT_TIMESTAMP），
 // 展示为本地时区 24 小时制（浏览器时区，即中国时区环境显示北京时间）；解析失败原样返回
