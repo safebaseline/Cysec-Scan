@@ -78,7 +78,7 @@ export const api = {
     request('/api/system/whitelist', { method: 'PUT', body: JSON.stringify({ items }) }),
   importAssets: (project_id: number, content: string, type: string) =>
     request('/api/assets', { method: 'POST', body: JSON.stringify({ project_id, content, type }) }),
-  changes: (pid: number) => request(`/api/changes?project_id=${pid}&limit=100`),
+  changes: (pid: number, page = 1, size = 20) => request(`/api/changes?project_id=${pid}&limit=${size}&offset=${(page - 1) * size}`),
   search: (pid: number, q: string) => request(`/api/search?project_id=${pid}&q=${encodeURIComponent(q)}`),
   plugins: () => request('/api/system/plugins'),
   sysLogs: () => request('/api/system/logs'),

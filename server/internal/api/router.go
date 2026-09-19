@@ -1080,13 +1080,13 @@ func (api *API) changes(c *gin.Context) {
 	if !ok {
 		return
 	}
-	limit, _ := page(c)
-	rows, err := api.store.ListChanges(pid, limit)
+	limit, offset := page(c)
+	rows, total, err := api.store.ListChangesPaged(pid, limit, offset)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, rows)
+	c.JSON(200, gin.H{"items": rows, "total": total})
 }
 
 func (api *API) reports(c *gin.Context) {

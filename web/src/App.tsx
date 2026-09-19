@@ -300,9 +300,11 @@ function Monitor({ pid }: { pid: number }) { const [data, setData] = useState<an
       actions={(t: any) => (<span><button onClick={() => api.taskRun(t.id).then(refresh)}>立即执行</button>
         <button onClick={async () => { if (await askConfirm("删除 #" + t.id + "？")) api.taskDelete(t.id).then(refresh); }}>删除</button></span>)} /></Card></div>); }
 
-function Changes({ pid }: { pid: number }) { const [rows, setRows] = useState<any[]>([]);
-  useEffect(() => { api.changes(pid).then(setRows).catch(() => undefined); }, [pid]);
-  return (<Card title="资产变化记录"><Table cols={['created_at', 'change', 'asset_type', 'asset', 'detail']} rows={rows} /></Card>); }
+function Changes({ pid }: { pid: number }) { const [rows, setRows] = useState<any[]>([]); const [total, setTotal] = useState(0); const [pg, setPg] = useState(1);
+  useEffect(() => { setPg(1); }, [pid]);
+  useEffect(() => { api.changes(pid, pg).then((d) => { setRows(d.items || []); setTotal(d.total || 0); if (!(d.items || []).length && pg > 1) setPg(pg - 1); }).catch(() => undefined); }, [pid, pg]);
+  return (<Card title="资产变化记录"><Table cols={['created_at', 'change', 'asset_type', 'asset', 'detail']} rows={rows} />
+    <Pager total={total} page={pg} setPage={setPg} /></Card>); }
 
 function ImportPanel({ pid }: { pid: number }) { const [content, setContent] = useState(''); const [msg, setMsg] = useState('');
   const submit = async (e: React.FormEvent) => { e.preventDefault(); try { const r = await api.importAssets(pid, content, 'mixed'); setMsg(`IP ${r.ips}（新增 ${r.new_ips}），域名 ${r.domains}，URL ${r.urls}`); setContent(''); } catch (ex: any) { setMsg(ex.message); } };

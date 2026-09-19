@@ -859,6 +859,21 @@ func (s *Store) ListChanges(projectID int64, limit int) ([]map[string]any, error
 	return scanMaps(rows)
 }
 
+// ListChangesPaged 变化记录分页查询（按 id 倒序），返回当前页与总数
+func (s *Store) ListChangesPaged(projectID int64, limit, offset int) ([]map[string]any, int, error) {
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM asset_changes WHERE project_id=?`, projectID).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.Query(`SELECT * FROM asset_changes WHERE project_id=? ORDER BY id DESC LIMIT ? OFFSET ?`, projectID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	ms, err := scanMaps(rows)
+	return ms, total, err
+}
+
 func (s *Store) SystemLog(l model.SystemLog) {
 	s.db.Exec(`INSERT INTO system_logs(username,action,object,client_ip,result,created_at) VALUES(?,?,?,?,?,?)`,
 		l.Username, l.Action, l.Object, l.ClientIP, l.Result, NowLocal())
