@@ -448,6 +448,16 @@ func (e *Engine) detectWeb(task *model.ScanTask, webURL, ip string, timeoutSec i
 	if len(techs) > 0 {
 		e.store.Exec(`UPDATE asset_web SET tech=? WHERE id=?`, strings.Join(techs, ","), webID)
 	}
+	// Web 探测明细（新发现/更新均记录，含状态码、标题与指纹，镜像到控制台）
+	techStr := "-"
+	if len(techs) > 0 {
+		techStr = strings.Join(techs, ",")
+	}
+	state := "更新"
+	if isNew {
+		state = "发现"
+	}
+	e.store.LogTask(task.ID, "info", fmt.Sprintf("%s Web 资产 %s [状态 %d] 标题 %q 指纹: %s", state, w.URL, w.StatusCode, w.Title, techStr))
 	// 主 URL 进入 URL 资产池
 	e.store.UpsertURL(model.AssetURL{
 		ProjectID: task.ProjectID, WebID: webID, URL: w.URL, StatusCode: w.StatusCode,
@@ -919,6 +929,8 @@ func (e *Engine) saveVuln(task *model.ScanTask, vr plugins.VulnResult, w *plugin
 	}
 	id, isNew, err := e.store.UpsertVuln(v)
 	if err == nil && isNew {
+		// 新检出漏洞统一记一条任务日志（LogTask 会镜像到控制台，nuclei 侧另有引擎明细行）
+		e.store.LogTask(task.ID, "info", fmt.Sprintf("检出漏洞 [%s] %s %s", vr.Severity, vr.Name, w.URL))
 		e.store.AddChange(model.AssetChange{ProjectID: task.ProjectID, TaskID: task.ID, AssetType: "vuln",
 			Asset: fmt.Sprintf("%s@%s", vr.VulnID, w.URL), Change: "add", Detail: vr.Name + " [" + vr.Severity + "]"})
 		// 实时 AI 研判：新增漏洞即入队异步分析（等级过滤与开关在出队时判断）

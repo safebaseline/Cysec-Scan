@@ -774,11 +774,22 @@ func (s *Store) DeleteTask(id int64) error {
 	return err
 }
 
+// LogTask 任务日志落库，并镜像到控制台（console 运行日志：资产采集 / 漏洞引擎全程可见）。
+// 合成任务（ID<=0：实时扫描、手动导入触发的检测链）不落库，仅输出控制台。
 func (s *Store) LogTask(taskID int64, level, msg string) {
+	tag := ""
+	switch level {
+	case "warn":
+		tag = "[警告]"
+	case "error":
+		tag = "[错误]"
+	}
 	if taskID <= 0 {
-		return // 实时扫描等合成任务不落任务日志
+		log.Printf("[实时扫描]%s %s", tag, msg)
+		return
 	}
 	s.db.Exec(`INSERT INTO scan_logs(task_id,level,message,created_at) VALUES(?,?,?,?)`, taskID, level, msg, NowLocal())
+	log.Printf("[任务#%d]%s %s", taskID, tag, msg)
 }
 
 func (s *Store) TaskLogs(taskID int64, limit int) ([]map[string]any, error) {

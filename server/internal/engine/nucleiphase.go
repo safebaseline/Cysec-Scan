@@ -192,6 +192,7 @@ func (e *Engine) runNucleiBatchJobs(jobs []autoScanJob) {
 			Component:   "规则库(nuclei)",
 			Scanner:     "nuclei-engine",
 		}, w)
+		log.Printf("[nuclei] 检出 %s %s %s", strings.ToUpper(orDefaultStr(f.Severity, "info")), orDefaultStr(f.Name, f.TemplateID), orDefaultStr(f.MatchedAt, f.URL))
 		matched++
 		perTask[j.taskID]++
 	}
