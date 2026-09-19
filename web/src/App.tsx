@@ -40,6 +40,22 @@ function cell(v: any): ReactNode { if (v === null || v === undefined || v === ''
   if (typeof v === 'string' && LABEL_MAP[v]) return label(v); if (typeof v === 'boolean') return v ? '✔' : '✘';
   if (typeof v === 'object') return JSON.stringify(v).slice(0, 80); const s = String(v); return s.length > 80 ? s.slice(0, 80) + '…' : s; }
 
+// NumInput 手动输入模式的正整数输入框：实时过滤非数字字符与前导零、超上限截断，
+// 失焦时为空/0 则回落到 min。type=text + 数字键盘（type=number 会静默吞掉非法字符且允许 e/-）。
+function NumInput({ value, onChange, min = 1, max, width, placeholder }: { value: number; onChange: (v: number) => void; min?: number; max?: number; width?: number; placeholder?: string }) {
+  const sanitize = (s: string): number => {
+    const digits = s.replace(/\D/g, '').replace(/^0+/, '');
+    if (digits === '') return 0;
+    let n = parseInt(digits, 10);
+    if (max && n > max) n = max;
+    return n;
+  };
+  return <input type="text" inputMode="numeric" placeholder={placeholder}
+    value={value || ''} style={width ? { width } : undefined}
+    onChange={(e) => onChange(sanitize(e.target.value))}
+    onBlur={() => { if (!value) onChange(min); }} />;
+}
+
 // 分页：每页条数与后端 limit/offset 对应
 const PAGE_SIZE = 20;
 function Pager({ total, page, setPage }: { total: number; page: number; setPage: (p: number) => void }) {
@@ -270,11 +286,11 @@ function Tasks({ pid }: { pid: number }) { const [data, setData] = useState<any>
         <label>模式<select value={form.mode} onChange={(e) => setForm({ ...form, mode: e.target.value })}>
           <option value="quick">快速（测绘+常见端口）</option><option value="standard">标准（测绘+Top1000+全部漏洞）</option><option value="deep">深度（测绘+全端口+全部漏洞）</option></select></label>
         <label>端口<input placeholder="空=默认" value={form.ports} onChange={(e) => setForm({ ...form, ports: e.target.value })} /></label>
-        <label>并发<input type="number" value={form.concurrency} onChange={(e) => setForm({ ...form, concurrency: +e.target.value })} /></label>
-        <label>超时(秒)<input type="number" value={form.timeout_sec} onChange={(e) => setForm({ ...form, timeout_sec: +e.target.value })} /></label>
+        <label>并发<NumInput value={form.concurrency} min={1} onChange={(v) => setForm({ ...form, concurrency: v })} /></label>
+        <label>超时(秒)<NumInput value={form.timeout_sec} min={1} onChange={(v) => setForm({ ...form, timeout_sec: v })} /></label>
         <label>周期<select value={['','8h','24h','1w'].includes(form.scan_interval) ? form.scan_interval : 'custom'} onChange={(e) => setForm({ ...form, scan_interval: e.target.value === 'custom' ? '1h' : e.target.value })}>
           <option value="">一次性</option><option value="8h">8小时</option><option value="24h">24小时</option><option value="1w">每周</option><option value="custom">自定义</option></select></label>
-        {!['','8h','24h','1w'].includes(form.scan_interval) && (<label>小时<input type="number" min={1} max={8760} style={{ width: 70 }} value={parseInt(form.scan_interval) || 1} onChange={(e) => setForm({ ...form, scan_interval: (Math.max(1, Math.min(8760, +e.target.value || 1))) + 'h' })} /></label>)}
+        {!['','8h','24h','1w'].includes(form.scan_interval) && (<label>小时<NumInput width={70} value={parseInt(form.scan_interval) || 1} min={1} max={8760} onChange={(v) => setForm({ ...form, scan_interval: v + 'h' })} /></label>)}
       </div><button type="submit">{editId ? '保存修改' : '提交'}</button>{editId && <button type="button" onClick={() => { setShowCreate(false); resetForm(); }}>取消编辑</button>}</form></Card>)}
     <Card><Table cols={['id', 'name', 'mode', 'scan_interval', 'status', 'progress', 'created_at']}
       rows={(data.items || []).map((t: any) => ({ ...t, scan_interval: t.scan_interval || '-' }))}
