@@ -1081,7 +1081,7 @@ func (api *API) changes(c *gin.Context) {
 		return
 	}
 	limit, offset := page(c)
-	rows, total, err := api.store.ListChangesPaged(pid, limit, offset)
+	rows, total, err := api.store.ListChangesPaged(pid, c.Query("q"), c.Query("type"), c.Query("change"), limit, offset)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return

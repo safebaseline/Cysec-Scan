@@ -859,13 +859,26 @@ func (s *Store) ListChanges(projectID int64, limit int) ([]map[string]any, error
 	return scanMaps(rows)
 }
 
-// ListChangesPaged 变化记录分页查询（按 id 倒序），返回当前页与总数
-func (s *Store) ListChangesPaged(projectID int64, limit, offset int) ([]map[string]any, int, error) {
+// ListChangesPaged 变化记录分页查询（按 id 倒序），q 匹配资产/详情，typ/change 为可选过滤，返回当前页与总数
+func (s *Store) ListChangesPaged(projectID int64, q, typ, change string, limit, offset int) ([]map[string]any, int, error) {
+	where, args := `project_id=?`, []any{projectID}
+	if q != "" {
+		where += ` AND (asset LIKE ? OR detail LIKE ?)`
+		args = append(args, "%"+q+"%", "%"+q+"%")
+	}
+	if typ != "" {
+		where += ` AND asset_type=?`
+		args = append(args, typ)
+	}
+	if change != "" {
+		where += ` AND change=?`
+		args = append(args, change)
+	}
 	var total int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM asset_changes WHERE project_id=?`, projectID).Scan(&total); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM asset_changes WHERE `+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.Query(`SELECT * FROM asset_changes WHERE project_id=? ORDER BY id DESC LIMIT ? OFFSET ?`, projectID, limit, offset)
+	rows, err := s.db.Query(`SELECT * FROM asset_changes WHERE `+where+` ORDER BY id DESC LIMIT ? OFFSET ?`, append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}

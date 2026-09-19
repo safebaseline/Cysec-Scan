@@ -301,9 +301,18 @@ function Monitor({ pid }: { pid: number }) { const [data, setData] = useState<an
         <button onClick={async () => { if (await askConfirm("删除 #" + t.id + "？")) api.taskDelete(t.id).then(refresh); }}>删除</button></span>)} /></Card></div>); }
 
 function Changes({ pid }: { pid: number }) { const [rows, setRows] = useState<any[]>([]); const [total, setTotal] = useState(0); const [pg, setPg] = useState(1);
+  const [q, setQ] = useState(''); const [type, setType] = useState(''); const [change, setChange] = useState('');
   useEffect(() => { setPg(1); }, [pid]);
-  useEffect(() => { api.changes(pid, pg).then((d) => { setRows(d.items || []); setTotal(d.total || 0); if (!(d.items || []).length && pg > 1) setPg(pg - 1); }).catch(() => undefined); }, [pid, pg]);
-  return (<Card title="资产变化记录"><Table cols={['created_at', 'change', 'asset_type', 'asset', 'detail']} rows={rows} />
+  useEffect(() => { const t = setTimeout(() => { api.changes(pid, pg, 20, q, type, change).then((d) => { setRows(d.items || []); setTotal(d.total || 0); if (!(d.items || []).length && pg > 1) setPg(pg - 1); }).catch(() => undefined); }, q ? 300 : 0); return () => clearTimeout(t); }, [pid, pg, q, type, change]);
+  return (<Card title="资产变化记录"><div className="toolbar">
+    <input className="search" placeholder="搜索资产 / 详情…" value={q} onChange={(e) => { setQ(e.target.value); setPg(1); }} />
+    <select value={type} onChange={(e) => { setType(e.target.value); setPg(1); }}>
+      <option value="">全部类型</option><option value="ip">IP</option><option value="domain">域名</option>
+      <option value="port">端口</option><option value="web">Web</option><option value="url">URL</option><option value="vuln">漏洞</option></select>
+    <select value={change} onChange={(e) => { setChange(e.target.value); setPg(1); }}>
+      <option value="">全部变化</option><option value="add">新增</option><option value="remove">移除</option></select>
+    <span className="muted">共 {total} 条</span></div>
+    <Table cols={['created_at', 'change', 'asset_type', 'asset', 'detail']} rows={rows} />
     <Pager total={total} page={pg} setPage={setPg} /></Card>); }
 
 function ImportPanel({ pid }: { pid: number }) { const [content, setContent] = useState(''); const [msg, setMsg] = useState('');
