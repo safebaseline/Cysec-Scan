@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,17 +96,22 @@ var commonWebPorts = map[int]bool{
 	8081: true, 8088: true, 8443: true, 8888: true, 9000: true, 9090: true, 10000: true,
 }
 
-// synthesizeWebURL 记录未携带 URL 时按 HTTP 服务特征合成 http(s)://域名或IP[:端口]；
+// synthesizeWebURL 记录未携带 URL 时按 HTTP 服务特征合成 URL；
 // 非 HTTP 特征返回空（不生成 Web 资产）。域名优先（vhost 语义），无域名用 IP。
+// 协议判定：标题/服务明确是 https（含"plain HTTP request was sent to HTTPS port"这类
+// 400 特征标题）直接定 https；其余返回裸 host[:port]，交给 NormalizeURL 做 TLS 探测定协议，
+// 避免 TLS 跑在非常用端口上被误落为 http。
 func synthesizeWebURL(r Record) string {
 	svc := strings.ToLower(r.Service)
-	if !strings.Contains(svc, "http") && !commonWebPorts[r.Port] {
+	title := strings.ToLower(r.Title)
+	titleHint := strings.Contains(title, "plain http request was sent to https port") ||
+		strings.Contains(title, "client sent a http request to https server")
+	// 400 特征标题本身就是 HTTP(S) 服务证据，可独立通过入口判定
+	if !strings.Contains(svc, "http") && !commonWebPorts[r.Port] && !titleHint {
 		return ""
 	}
-	scheme := "http"
-	if r.Port == 443 || r.Port == 8443 || strings.Contains(svc, "https") {
-		scheme = "https"
-	}
+	httpsHint := r.Port == 443 || r.Port == 8443 || r.Port == 4433 ||
+		strings.Contains(svc, "https") || titleHint
 	host := r.Domain
 	if host == "" {
 		host = r.IP
@@ -113,10 +119,13 @@ func synthesizeWebURL(r Record) string {
 	if host == "" {
 		return ""
 	}
-	if (scheme == "http" && r.Port != 80) || (scheme == "https" && r.Port != 443) {
+	if r.Port > 0 && r.Port != 80 && !(r.Port == 443 && httpsHint) {
 		host = fmt.Sprintf("%s:%d", host, r.Port)
 	}
-	return scheme + "://" + host
+	if httpsHint {
+		return "https://" + host
+	}
+	return host // 裸 host[:port]：NormalizeURL 按 TLS 握手结果补协议前缀
 }
 
 func (r Record) Banner() string {
@@ -152,8 +161,8 @@ func probeTLS(host string, port int) bool {
 	}
 	h := u2host(host)
 	if i := strings.LastIndex(h, ":"); i > 0 {
-		// URL 自带端口且 host 部分是 IP 时拆掉（避免 host:port:port）
-		if net.ParseIP(h[:i]) != nil {
+		// URL 自带端口时拆掉（避免 host:port:port）；IPv6 字面量端口同样命中，裸 IPv6 无端口不匹配数字后缀不受影响
+		if _, err := strconv.Atoi(h[i+1:]); err == nil {
 			h = h[:i]
 		}
 	}

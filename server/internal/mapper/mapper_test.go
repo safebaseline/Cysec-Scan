@@ -223,10 +223,13 @@ func TestSynthesizeWebURL(t *testing.T) {
 		rec  Record
 		want string
 	}{
-		{"FOFA纯IP+HTTP服务", Record{IP: "1.2.3.4", Port: 11001, Service: "HTTP"}, "http://1.2.3.4:11001"},
+		{"FOFA纯IP+HTTP服务", Record{IP: "1.2.3.4", Port: 11001, Service: "HTTP"}, "1.2.3.4:11001"},
 		{"纯IP+443", Record{IP: "1.2.3.4", Port: 443, Service: "HTTPS"}, "https://1.2.3.4"},
 		{"域名优先", Record{IP: "1.2.3.4", Port: 8443, Domain: "a.example.com", Service: "HTTP"}, "https://a.example.com:8443"},
-		{"服务空但常见Web端口", Record{IP: "1.2.3.4", Port: 8080}, "http://1.2.3.4:8080"},
+		{"400标题直接定https", Record{IP: "1.2.3.4", Port: 9105, Service: "HTTP", Title: "400 The plain HTTP request was sent to HTTPS port"}, "https://1.2.3.4:9105"},
+		{"400标题变体", Record{IP: "1.2.3.4", Port: 9105, Title: "400 Client Sent A HTTP Request To HTTPS Server"}, "https://1.2.3.4:9105"},
+		{"服务空但常见Web端口", Record{IP: "1.2.3.4", Port: 8080}, "1.2.3.4:8080"},
+		{"无端口不拼port0", Record{IP: "1.2.3.4", Service: "HTTP"}, "1.2.3.4"},
 		{"非HTTP服务不合成", Record{IP: "1.2.3.4", Port: 3306, Service: "MySQL"}, ""},
 		{"无端口特征不合成", Record{IP: "1.2.3.4", Port: 5555}, ""},
 	}
