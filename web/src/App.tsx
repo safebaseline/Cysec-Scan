@@ -63,6 +63,7 @@ const LABEL_MAP: Record<string, string> = {
   component: '组件', mark: '标记', id: 'ID', source: '来源', rule_id: '规则编号', tags: '标签',
   supported: '可执行', enabled: '启用', status: '状态', progress: '进度', mode: '模式',
   scan_interval: '周期', created_by: '创建人', created_at: '创建时间', ended_at: '结束时间',
+  first_seen: '发现时间', last_seen: '最近命中',
   next_run: '下次执行', targets: '目标', network: '网络类型', alive: '存活',
   probe_method: '探测方式', latency_ms: '延迟(ms)', risk_score: '风险评分', cname: 'CNAME',
   protocol: '协议', service: '服务', version: '版本', category: '分类', banner: 'Banner',
@@ -164,7 +165,7 @@ function IPDetail({ pid, ip, onClose }: { pid: number; ip: string; onClose: () =
       <h4>关联域名（{d.domains?.length || 0}）</h4><Table cols={['domain', 'cname', 'ip']} rows={d.domains || []} />
       <h4>开放端口（{d.ports?.length || 0}）</h4><Table cols={['port', 'protocol', 'service', 'version', 'category', 'banner']} rows={d.ports || []} />
       <h4>Web 资产（{d.web?.length || 0}）</h4><Table cols={['url', 'status_code', 'title', 'server', 'tech']} rows={d.web || []} />
-      <h4>关联漏洞（{d.vulnerabilities?.length || 0}）</h4><Table cols={['severity', 'vuln_id', 'name', 'url', 'component', 'mark']} rows={d.vulnerabilities || []} /></div></div></div>); }
+      <h4>关联漏洞（{d.vulnerabilities?.length || 0}）</h4><Table cols={['severity', 'vuln_id', 'name', 'url', 'component', 'first_seen', 'mark']} rows={d.vulnerabilities || []} /></div></div></div>); }
 
 function downloadExport(pid: number, type: string, format: string) { return (e: any) => { e.preventDefault();
   fetch(`/api/export?project_id=${pid}&type=${type}&format=${format}`, { headers: { Authorization: `Bearer ${getToken()}` } }).then((r) => r.blob()).then((b) => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `${type}.${format}`; a.click(); }); }; }
@@ -212,7 +213,7 @@ function Vulns({ pid }: { pid: number }) { const [sev, setSev] = useState(''); c
     <a className="btn" href="#" onClick={downloadExport(pid, 'vulnerabilities', 'json')}>导出 JSON</a>
     <button style={{ marginLeft: 'auto' }} onClick={doAIAll} disabled={aiAllBusy}>{aiAllBusy ? 'AI研判中…' : '🤖 AI全部研判'}</button>
     <button onClick={doClearAll}>全部删除</button></div>
-    <Card><Table cols={['severity', 'vuln_id', 'name', 'ip', 'port', 'url', 'component', 'mark']} rows={data.items || []}
+    <Card><Table cols={['severity', 'vuln_id', 'name', 'ip', 'port', 'url', 'component', 'first_seen', 'mark']} rows={data.items || []}
       onRow={(r) => api.vulnDetail(r.id).then(setDetail).catch(() => undefined)}
       actions={(v: any) => (<span>
         <button disabled={aiBusy === v.id} onClick={() => doAI(v.id)}>{aiBusy === v.id ? 'AI…' : 'AI研判'}</button>
@@ -226,7 +227,7 @@ function Vulns({ pid }: { pid: number }) { const [sev, setSev] = useState(''); c
     {detail && (<div className="modal" onClick={() => setDetail(null)}><div className="modal-body" onClick={(e) => e.stopPropagation()}>
       <div className="modal-head"><h3>{detail.vuln_id} · {detail.name}</h3><button onClick={() => setDetail(null)}>关闭</button></div>
       <div className="profile"><div><b>等级：</b><SevTag sev={detail.severity} />　<b>资产：</b>{detail.ip}{detail.port ? ':' + detail.port : ''}　<b>URL：</b>{detail.url || '-'}
-        {'　'}<b>标记：</b>{MARK_LABEL[detail.mark || ''] || '未标记'}</div>
+        {'　'}<b>发现时间：</b>{fmtTime(detail.first_seen) || '-'}　<b>标记：</b>{MARK_LABEL[detail.mark || ''] || '未标记'}</div>
         {detail.description && <div><b>描述：</b>{detail.description}</div>}
         {detail.evidence && <div><b>判定：</b>{detail.evidence}</div>}
         {detail.solution && <div><b>修复：</b>{detail.solution}</div>}
