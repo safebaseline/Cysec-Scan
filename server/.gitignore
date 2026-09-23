@@ -1,0 +1,5 @@
+server/data/
+server/cmd/cysec/webdist/
+web/node_modules/
+web/dist/
+dist/

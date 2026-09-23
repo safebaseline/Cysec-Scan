@@ -1,0 +1,257 @@
+package mapper
+
+import (
+	"crypto/tls"
+	"fmt"
+	"net"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"cysec/internal/model"
+	"cysec/internal/netproxy"
+	"cysec/internal/store"
+	"cysec/plugins/builtin"
+)
+
+// Import 将测绘记录归一化写入资产库（自动去重），返回新增统计。
+// 这是「IP 进入空间测绘后自动扩展出 Domain/Port/Service/URL/Web」的核心落库逻辑。
+// roots 非空时做域名一致性校验：测绘带回的杂域名（如 IP 上绑定的其他单位域名）不入库，
+// 其 IP/端口维度资产保留；URL host 为杂域名时该 Web 资产同样丢弃。
+func Import(st *store.Store, projectID, taskID int64, recs []Record, roots []string, fpIgnored []string) (newIPs, newDomains, newPorts, newWebs int) {
+	rejected := map[string]bool{}
+	for _, r := range recs {
+		if r.IP == "" && r.URL == "" && r.Domain == "" {
+			continue
+		}
+		// 误报资产配置：IP/域名/URL 命中即整条跳过（不再入库）
+		if r.IP != "" && store.FPAssetIgnored(fpIgnored, "ip", r.IP) {
+			continue
+		}
+		if r.Domain != "" && store.FPAssetIgnored(fpIgnored, "domain", r.Domain) {
+			continue
+		}
+		if r.URL != "" && store.FPAssetIgnored(fpIgnored, "web", r.URL) {
+			continue
+		}
+		// 域名一致性校验（从后往前逐标签比对；roots 空则放行）
+		if r.Domain != "" && !store.DomainMatchesApex(r.Domain, roots) {
+			rejected[r.Domain] = true
+			r.Domain = ""
+		}
+		if r.URL != "" {
+			if host := hostOnly(u2host(r.URL)); host != "" && !store.IsIPStr(host) && !store.DomainMatchesApex(host, roots) {
+				rejected[host] = true
+				r.URL = "" // 杂域名 vhost 站点不入库（后续按 IP 维度重合成）
+			}
+		}
+		// IP 资产
+		if r.IP != "" {
+			isNew, err := st.UpsertIP(model.AssetIP{
+				ProjectID: projectID, IP: r.IP,
+				Network: networkOf(r.IP), Source: r.Provider,
+			})
+			if err == nil && isNew {
+				newIPs++
+				st.AddChange(model.AssetChange{ProjectID: projectID, TaskID: taskID, AssetType: "ip", Asset: r.IP, Change: "add", Detail: "测绘发现(" + r.Provider + ")"})
+			}
+		}
+		// 域名资产（含解析 IP 关联）
+		if r.Domain != "" {
+			isNew, err := st.UpsertDomain(model.AssetDomain{
+				ProjectID: projectID, Domain: r.Domain, IP: r.IP, Source: r.Provider,
+			})
+			if err == nil && isNew {
+				newDomains++
+				st.AddChange(model.AssetChange{ProjectID: projectID, TaskID: taskID, AssetType: "domain", Asset: r.Domain, Change: "add", Detail: "测绘发现(" + r.Provider + ")"})
+			}
+		}
+		// 端口资产（含服务识别与分拣）
+		if r.IP != "" && r.Port > 0 {
+			service := r.Service
+			if service == "" {
+				service = builtin.CategoryOf(r.Port, "")
+			}
+			isNew, err := st.UpsertPort(model.AssetPort{
+				ProjectID: projectID, IP: r.IP, Port: r.Port,
+				Protocol: orDefault(r.Protocol, "tcp"), State: "open",
+				Service: service, Version: "", Banner: r.Banner(),
+				Category: builtin.CategoryOf(r.Port, service), Source: r.Provider,
+			})
+			if err == nil && isNew {
+				newPorts++
+				st.AddChange(model.AssetChange{ProjectID: projectID, TaskID: taskID, AssetType: "port",
+					Asset: fmt.Sprintf("%s:%d", r.IP, r.Port), Change: "add", Detail: service + " (" + r.Provider + ")"})
+			}
+		}
+		// Web 资产 + URL 资产池
+		if r.URL == "" {
+			// 测绘记录未携带 URL（FOFA 纯 IP 记录的 host 字段为空）时按 HTTP 服务特征合成，
+			// 避免"端口已入库而 Web 资产缺失"（Quake/Shodan 解析器自带拼接，此兜底覆盖全部来源）
+			r.URL = synthesizeWebURL(r)
+		}
+		if r.URL != "" {
+			r.URL = NormalizeURL(r.URL, r.Port)
+			webID, isNew, err := st.UpsertWeb(model.AssetWeb{
+				ProjectID: projectID, URL: r.URL, IP: r.IP, Domain: r.Domain, Port: r.Port,
+				Protocol: schemeOf(r.URL), Title: r.Title, Server: r.Server,
+				Tech: r.Fingerprint, Source: r.Provider,
+			})
+			if err == nil {
+				if isNew {
+					newWebs++
+					st.AddChange(model.AssetChange{ProjectID: projectID, TaskID: taskID, AssetType: "web", Asset: r.URL, Change: "add", Detail: r.Title})
+					// 测绘导入的新增 Web 资产交实时漏洞扫描器异步执行
+					if newWebHandler != nil {
+						newWebHandler(projectID, r.URL)
+					}
+				}
+				st.UpsertURL(model.AssetURL{ProjectID: projectID, WebID: webID, URL: r.URL, Source: r.Provider})
+			}
+		}
+	}
+	if len(rejected) > 0 {
+		names := make([]string, 0, len(rejected))
+		for k := range rejected {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		st.LogTask(taskID, "warn", fmt.Sprintf("域名一致性拦截 %d 条（与任务域名不符）：%s", len(names), strings.Join(names, ", ")))
+	}
+	return
+}
+
+// Banner 生成简短 Banner 摘要（便于溯源）
+// commonWebPorts 服务识别未标注 http 时的常见 Web 端口兜底
+var commonWebPorts = map[int]bool{
+	80: true, 443: true, 3000: true, 5000: true, 7001: true, 8000: true, 8080: true,
+	8081: true, 8088: true, 8443: true, 8888: true, 9000: true, 9090: true, 10000: true,
+}
+
+// synthesizeWebURL 记录未携带 URL 时按 HTTP 服务特征合成 URL；
+// 非 HTTP 特征返回空（不生成 Web 资产）。域名优先（vhost 语义），无域名用 IP。
+// 协议判定：标题/服务明确是 https（含"plain HTTP request was sent to HTTPS port"这类
+// 400 特征标题）直接定 https；其余返回裸 host[:port]，交给 NormalizeURL 做 TLS 探测定协议，
+// 避免 TLS 跑在非常用端口上被误落为 http。
+func synthesizeWebURL(r Record) string {
+	svc := strings.ToLower(r.Service)
+	title := strings.ToLower(r.Title)
+	titleHint := strings.Contains(title, "plain http request was sent to https port") ||
+		strings.Contains(title, "client sent a http request to https server")
+	// 400 特征标题本身就是 HTTP(S) 服务证据，可独立通过入口判定
+	if !strings.Contains(svc, "http") && !commonWebPorts[r.Port] && !titleHint {
+		return ""
+	}
+	httpsHint := r.Port == 443 || r.Port == 8443 || r.Port == 4433 ||
+		strings.Contains(svc, "https") || titleHint
+	host := r.Domain
+	if host == "" {
+		host = r.IP
+	}
+	if host == "" {
+		return ""
+	}
+	if r.Port > 0 && r.Port != 80 && !(r.Port == 443 && httpsHint) {
+		host = fmt.Sprintf("%s:%d", host, r.Port)
+	}
+	if httpsHint {
+		return "https://" + host
+	}
+	return host // 裸 host[:port]：NormalizeURL 按 TLS 握手结果补协议前缀
+}
+
+func (r Record) Banner() string {
+	parts := []string{}
+	if r.Title != "" {
+		parts = append(parts, "title: "+r.Title)
+	}
+	if r.Fingerprint != "" {
+		parts = append(parts, "fp: "+r.Fingerprint)
+	}
+	return strings.Join(parts, " | ")
+}
+
+// NormalizeURL 保证 URL 以 http:// 或 https:// 开头。
+// 端口为 443/8443/4433 直接判定 https；非标准端口用 TLS 握手探测（握手成功=https，失败=http），
+// 探测超时 3 秒，走全局代理。
+func NormalizeURL(u string, port int) string {
+	u = strings.TrimSpace(u)
+	if u == "" || strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
+		return u
+	}
+	scheme := "http"
+	if port == 443 || port == 8443 || port == 4433 || probeTLS(u, port) {
+		scheme = "https"
+	}
+	return scheme + "://" + u
+}
+
+// probeTLS 对 host:port 做一次 TLS 握手，成功返回 true
+func probeTLS(host string, port int) bool {
+	if port <= 0 || port > 65535 {
+		return false
+	}
+	h := u2host(host)
+	if i := strings.LastIndex(h, ":"); i > 0 {
+		// URL 自带端口时拆掉（避免 host:port:port）；IPv6 字面量端口同样命中，裸 IPv6 无端口不匹配数字后缀不受影响
+		if _, err := strconv.Atoi(h[i+1:]); err == nil {
+			h = h[:i]
+		}
+	}
+	if h == "" {
+		return false
+	}
+	addr := net.JoinHostPort(h, fmt.Sprint(port))
+	conn, err := netproxy.TLSDial(addr, 3*time.Second, &tls.Config{InsecureSkipVerify: true})
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+func u2host(u string) string {
+	// 去掉可能存在的 scheme 前缀与路径
+	u = strings.TrimPrefix(strings.TrimPrefix(u, "http://"), "https://")
+	if i := strings.Index(u, "/"); i > 0 {
+		u = u[:i]
+	}
+	return u
+}
+
+func networkOf(ip string) string {
+	if n := net.ParseIP(ip); n != nil && (n.IsLoopback() || n.IsPrivate() || n.IsLinkLocalUnicast()) {
+		return "private"
+	}
+	return "public"
+}
+
+func orDefault(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
+}
+
+func schemeOf(u string) string {
+	if strings.HasPrefix(u, "https") {
+		return "https"
+	}
+	return "http"
+}
+
+// newWebHandler 新增 Web 资产回调：由 main 注入引擎的实时漏洞扫描入口
+// （mapper 不能直接依赖 engine——engine 已依赖 mapper，反向会成环）
+var newWebHandler func(projectID int64, url string)
+
+// SetNewWebHandler 注册新增 Web 资产回调（传入 nil 表示停用）
+func SetNewWebHandler(fn func(projectID int64, url string)) { newWebHandler = fn }
+
+// hostOnly 去掉 host:port 形态的端口部分（拦截日志与判定使用纯域名）
+func hostOnly(h string) string {
+	if hp, _, err := net.SplitHostPort(h); err == nil {
+		return hp
+	}
+	return h
+}

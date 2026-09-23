@@ -1,0 +1,17 @@
+version: "3.8"
+services:
+  cysec:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: cysec-scan:latest
+    container_name: cysec
+    ports:
+      - "8080:8080"
+    volumes:
+      - cysec-data:/app/data
+      - ../configs:/app/configs:ro
+    restart: unless-stopped
+
+volumes:
+  cysec-data:

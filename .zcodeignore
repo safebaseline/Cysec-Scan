@@ -1,0 +1,7 @@
+# 运行时数据（数据库 / 备份 / POC 仓库，程序启动自动创建）
+data/
+logs/
+*.log
+nohup.out
+dist/
+node_modules/
