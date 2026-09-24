@@ -77,11 +77,13 @@ func (e *Engine) runAIAnalyze(j aiAnalyzeJob) {
 	}
 	if j.kind == "weakness" {
 		if err := e.store.SetWeaknessMark(j.id, verdict.Mark); err == nil {
+			e.store.SetWeaknessAI(j.id, verdict.Mark, verdict.Confidence, verdict.Reasoning)
 			log.Printf("[AI] 弱点研判 %s: %s（%s）%s", j.ctx.VulnID, verdict.Mark, verdict.Confidence, verdict.Reasoning)
 		}
 		return
 	}
 	if err := e.store.SetVulnMark(j.id, verdict.Mark); err == nil {
+		e.store.SetVulnAI(j.id, verdict.Mark, verdict.Confidence, verdict.Reasoning)
 		log.Printf("[AI] 研判 %s: %s（%s）%s", j.ctx.VulnID, verdict.Mark, verdict.Confidence, verdict.Reasoning)
 	}
 }

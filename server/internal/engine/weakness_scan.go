@@ -174,11 +174,13 @@ func (e *Engine) runWeaknessScan(task *model.ScanTask, w *plugins.WebResult, bod
 		}
 		for i, pf := range pfs {
 			if newFlags[i] {
-				// 实时 AI 研判：新增弱点即入队（开关与等级过滤在出队时判断）
-				e.SubmitWeaknessAIAnalyze(ids[i], ai.VulnContext{
-					VulnID: pf.f.Type, Name: pf.f.Anchor, Severity: pf.f.Severity, Description: pf.f.Detail,
-					URL: pf.pageURL, Evidence: pf.f.Evidence,
-				})
+			// 实时 AI 研判：新增弱点即入队（开关与等级过滤在出队时判断）
+			e.SubmitWeaknessAIAnalyze(ids[i], ai.VulnContext{
+				Kind: "weakness", VulnID: pf.f.Type, Name: pf.f.Anchor, Severity: pf.f.Severity, Description: pf.f.Detail,
+				URL: pf.f.URL, Evidence: pf.f.Evidence,
+				SiteURL: w.URL, PageURL: pf.pageURL, PageTitle: pf.pageTitle,
+				StatusCode: pf.f.StatusCode, Detail: pf.f.Detail, Anchor: pf.f.Anchor, ContextHTML: pf.f.Context,
+			})
 			}
 		}
 	}

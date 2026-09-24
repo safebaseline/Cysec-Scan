@@ -742,11 +742,12 @@ func (api *API) aiAnalyzeVuln(c *gin.Context) {
 		c.JSON(502, gin.H{"error": err.Error()})
 		return
 	}
-	// 自动写入 AI 标记
+	// 自动写入 AI 标记 + 研判明细留存（详情页展示）
 	if err := api.store.SetVulnMark(id, verdict.Mark); err != nil {
 		c.JSON(500, gin.H{"error": "标记写入失败: " + err.Error()})
 		return
 	}
+	api.store.SetVulnAI(id, verdict.Mark, verdict.Confidence, verdict.Reasoning)
 	api.store.SystemLog(model.SystemLog{Username: c.GetString("username"), Action: "ai_analyze",
 		Object:   fmt.Sprintf("vuln#%d=%s(confidence=%s)", id, verdict.Mark, verdict.Confidence),
 		ClientIP: c.ClientIP(), Result: "success"})
@@ -1811,10 +1812,32 @@ func (api *API) loadWih() wih.Settings {
 		var st wih.Settings
 		if json.Unmarshal([]byte(saved), &st) == nil && len(st.Rules) > 0 {
 			st.Normalize()
+			mergeNewDefaultRules(&st)
 			return st
 		}
 	}
 	return wih.DefaultSettings()
+}
+
+// mergeNewDefaultRules 已保存设置与默认规则合并：默认规则库新增的 ID 自动追加
+// （用户已有的自定义规则、启停状态与编辑过的正则全部保留），升级后界面即见新规则
+func mergeNewDefaultRules(st *wih.Settings) {
+	def := wih.DefaultSettings()
+	seen := map[string]bool{}
+	for _, r := range st.Rules {
+		seen[r.ID] = true
+	}
+	added := 0
+	for _, r := range def.Rules {
+		if !seen[r.ID] {
+			st.Rules = append(st.Rules, r)
+			added++
+		}
+	}
+	if added > 0 {
+		st.Normalize()
+		log.Printf("[敏感信息] 已保存设置合并默认规则：新增 %d 条", added)
+	}
 }
 
 func (api *API) getWihSettings(c *gin.Context) {
@@ -1993,8 +2016,10 @@ func (api *API) aiAnalyzeWeakness(c *gin.Context) {
 		json.Unmarshal([]byte(saved), &cfg)
 	}
 	verdict, err := ai.Analyze(cfg, ai.VulnContext{
-		VulnID: w.Type, Name: w.Anchor, Severity: w.Severity, Description: w.Detail,
+		Kind: "weakness", VulnID: w.Type, Name: w.Anchor, Severity: w.Severity, Description: w.Detail,
 		URL: w.URL, Evidence: w.Evidence,
+		SiteURL: w.WebURL, PageURL: w.PageURL, PageTitle: w.PageTitle,
+		StatusCode: w.StatusCode, Detail: w.Detail, Anchor: w.Anchor, ContextHTML: w.Context,
 	})
 	if err != nil {
 		c.JSON(502, gin.H{"error": err.Error()})
@@ -2004,6 +2029,7 @@ func (api *API) aiAnalyzeWeakness(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
+	api.store.SetWeaknessAI(id, verdict.Mark, verdict.Confidence, verdict.Reasoning)
 	c.JSON(200, verdict)
 }
 

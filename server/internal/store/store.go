@@ -368,6 +368,13 @@ func (s *Store) migrateTaskPhases() {
 	s.db.Exec(`ALTER TABLE scan_tasks ADD COLUMN subdomain_brute INTEGER DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE weaknesses ADD COLUMN mark TEXT DEFAULT ''`)
 	s.db.Exec(`ALTER TABLE weaknesses ADD COLUMN context TEXT DEFAULT ''`)
+	// AI 研判结果留存（详情页展示）：标记/置信度/推理依据
+	s.db.Exec(`ALTER TABLE weaknesses ADD COLUMN ai_mark TEXT DEFAULT ''`)
+	s.db.Exec(`ALTER TABLE weaknesses ADD COLUMN ai_confidence TEXT DEFAULT ''`)
+	s.db.Exec(`ALTER TABLE weaknesses ADD COLUMN ai_reasoning TEXT DEFAULT ''`)
+	s.db.Exec(`ALTER TABLE vulnerabilities ADD COLUMN ai_mark TEXT DEFAULT ''`)
+	s.db.Exec(`ALTER TABLE vulnerabilities ADD COLUMN ai_confidence TEXT DEFAULT ''`)
+	s.db.Exec(`ALTER TABLE vulnerabilities ADD COLUMN ai_reasoning TEXT DEFAULT ''`)
 	s.db.Exec(`ALTER TABLE weaknesses ADD COLUMN page_url TEXT DEFAULT ''`)
 	s.db.Exec(`ALTER TABLE weaknesses ADD COLUMN page_title TEXT DEFAULT ''`)
 	// 级联删除上线前的存量孤儿：web 已删但 URL/指纹残留（仪表盘计数虚高的根因）
@@ -799,15 +806,21 @@ func (s *Store) UpsertVuln(v model.Vulnerability) (int64, bool, error) {
 // GetVulnerability 漏洞详情（含请求/响应报文）
 func (s *Store) GetVulnerability(id int64) (*model.Vulnerability, error) {
 	v := &model.Vulnerability{}
-	err := s.db.QueryRow(`SELECT id,project_id,vuln_id,name,severity,ip,domain,port,url,service,component,description,solution,evidence,coalesce(request,''),coalesce(response,''),coalesce(mark,''),scanner,first_seen,last_seen
+	err := s.db.QueryRow(`SELECT id,project_id,vuln_id,name,severity,ip,domain,port,url,service,component,description,solution,evidence,coalesce(request,''),coalesce(response,''),coalesce(mark,''),scanner,coalesce(ai_mark,''),coalesce(ai_confidence,''),coalesce(ai_reasoning,''),first_seen,last_seen
 		FROM vulnerabilities WHERE id=?`, id).
 		Scan(&v.ID, &v.ProjectID, &v.VulnID, &v.Name, &v.Severity, &v.IP, &v.Domain, &v.Port, &v.URL,
 			&v.Service, &v.Component, &v.Description, &v.Solution, &v.Evidence, &v.Request, &v.Response,
-			&v.Mark, &v.Scanner, &v.FirstSeen, &v.LastSeen)
+			&v.Mark, &v.Scanner, &v.AIMark, &v.AIConfidence, &v.AIReasoning, &v.FirstSeen, &v.LastSeen)
 	if err != nil {
 		return nil, err
 	}
 	return v, nil
+}
+
+// SetVulnAI AI 研判结果留存（标记照旧写 mark，AI 明细单独留存供详情页展示）
+func (s *Store) SetVulnAI(id int64, mark, confidence, reasoning string) error {
+	_, err := s.db.Exec(`UPDATE vulnerabilities SET ai_mark=?, ai_confidence=?, ai_reasoning=? WHERE id=?`, mark, confidence, reasoning, id)
+	return err
 }
 
 // ---------- 任务 ----------
@@ -1129,6 +1142,21 @@ func (s *Store) ProjectStats(projectID int64) (map[string]any, error) {
 		rows.Close()
 	}
 	stats["vuln_by_severity"] = bySev
+	// 等级 × 标记 分组计数（仪表盘每行内联实报/误报/未标记细分）
+	bySevMarks := map[string]map[string]int{}
+	if mrows, err := s.db.Query(`SELECT severity, COALESCE(mark,''), COUNT(*) FROM vulnerabilities WHERE project_id=? GROUP BY severity, mark`, projectID); err == nil {
+		for mrows.Next() {
+			var sev, mk string
+			var n int
+			mrows.Scan(&sev, &mk, &n)
+			if bySevMarks[sev] == nil {
+				bySevMarks[sev] = map[string]int{}
+			}
+			bySevMarks[sev][mk] = n
+		}
+		mrows.Close()
+	}
+	stats["vuln_by_severity_marks"] = bySevMarks
 	// 弱点按类型统计 + 未处置（未标记）计数（仪表盘实时展示）
 	var wkTotal, wkUnmarked int
 	s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN COALESCE(mark,'')='' THEN 1 ELSE 0 END),0) FROM weaknesses WHERE project_id=?`, projectID).Scan(&wkTotal, &wkUnmarked)
@@ -1145,9 +1173,33 @@ func (s *Store) ProjectStats(projectID int64) (map[string]any, error) {
 		wrows.Close()
 	}
 	stats["weakness_by_type"] = byType
+	// 类型 × 标记 分组计数（同漏洞口径）
+	byTypeMarks := map[string]map[string]int{}
+	if trows, err := s.db.Query(`SELECT type, COALESCE(mark,''), COUNT(*) FROM weaknesses WHERE project_id=? GROUP BY type, mark`, projectID); err == nil {
+		for trows.Next() {
+			var tp, mk string
+			var n int
+			trows.Scan(&tp, &mk, &n)
+			if byTypeMarks[tp] == nil {
+				byTypeMarks[tp] = map[string]int{}
+			}
+			byTypeMarks[tp][mk] = n
+		}
+		trows.Close()
+	}
+	stats["weakness_by_type_marks"] = byTypeMarks
 	var vulnUnmarked int
 	s.db.QueryRow(`SELECT COUNT(*) FROM vulnerabilities WHERE project_id=? AND COALESCE(mark,'')=''`, projectID).Scan(&vulnUnmarked)
 	stats["vuln_unmarked"] = vulnUnmarked
+	// 标记维度计数（仪表盘实报/误报/未标记展示，漏洞与弱点各一组）
+	var vulnConfirmed, vulnFalse int
+	s.db.QueryRow(`SELECT COALESCE(SUM(CASE WHEN mark='confirmed' THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN mark='false_positive' THEN 1 ELSE 0 END),0) FROM vulnerabilities WHERE project_id=?`, projectID).Scan(&vulnConfirmed, &vulnFalse)
+	stats["vuln_confirmed"] = vulnConfirmed
+	stats["vuln_false_positive"] = vulnFalse
+	var wkConfirmed, wkFalse int
+	s.db.QueryRow(`SELECT COALESCE(SUM(CASE WHEN mark='confirmed' THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN mark='false_positive' THEN 1 ELSE 0 END),0) FROM weaknesses WHERE project_id=?`, projectID).Scan(&wkConfirmed, &wkFalse)
+	stats["weakness_confirmed"] = wkConfirmed
+	stats["weakness_false_positive"] = wkFalse
 	statsCacheMu.Lock()
 	statsCache[projectID] = statsCacheEntry{data: stats, at: time.Now()}
 	statsCacheMu.Unlock()

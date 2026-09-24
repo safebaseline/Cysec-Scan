@@ -320,6 +320,11 @@ label.inline { flex-direction: row; align-items: center; gap: 8px; color: var(--
 .muted { color: var(--text-muted); }
 .ok { color: var(--green); margin-top: 8px; }
 .err { color: var(--red); margin-top: 8px; }
+.ok-tag { color: var(--green); }
+.err-tag { color: var(--red); }
+.mark-bits { font-weight: 400; font-size: 12px; color: var(--text-dim); }
+.mark-bits .bit-ok { color: var(--red); }
+.mark-bits .bit-err { color: var(--green); }
 .hint { color: var(--text-muted); line-height: 1.9; padding-left: 18px; margin: 0; }
 .row-actions { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; }
 .task-actions button { margin-right: 4px; font-size: 13px; padding: 3px 8px; }

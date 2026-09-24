@@ -59,9 +59,18 @@ type VulnContext struct {
 	Evidence    string
 	Request     string
 	Response    string
+	// 弱点研判上下文（弱点管理专用；Kind=weakness 时生效）
+	Kind        string `json:"kind,omitempty"`        // 空=漏洞 / weakness=弱点
+	SiteURL     string `json:"site_url,omitempty"`     // 所属站点
+	PageURL     string `json:"page_url,omitempty"`     // 所属页面
+	PageTitle   string `json:"page_title,omitempty"`   // 页面标题
+	StatusCode  int    `json:"status_code,omitempty"`  // 链接状态码
+	Detail      string `json:"detail,omitempty"`       // 检测结论原文
+	Anchor      string `json:"anchor,omitempty"`       // 锚文本/命中词
+	ContextHTML string `json:"context_html,omitempty"` // 引用位置（链接在页面中的 HTML 片段）
 }
 
-// systemPrompt AI 研判提示词
+// systemPrompt AI 研判提示词（漏洞口径）
 const systemPrompt = `你是一位资深网络安全分析师。请根据以下漏洞检测结果，研判该漏洞是"实报"还是"误报"。
 
 分析要点：
@@ -78,6 +87,24 @@ const systemPrompt = `你是一位资深网络安全分析师。请根据以下�
 - false_positive: 误报，报文证据不足或匹配到了无关内容
 - confidence: 判断置信度`
 
+// weaknessSystemPrompt 弱点研判提示词（弱点管理专用口径）
+const weaknessSystemPrompt = `你是一位资深网站安全运营分析师，负责研判网站弱点检测结果（暗链/坏链/敏感字/敏感信息泄露）是"实报"还是"误报"。
+
+分析要点：
+1. 结合所属站点与页面内容语境判断：链接出现在正文、参考资料、页脚友链等位置的含义不同
+2. 坏链：关注状态码与检测结论——域名无法解析/404/410 通常是真实死链（实报）；412/429/403 多为防护拦截（倾向误报）；跳转链接（百度/bilibili 等）失效常见
+3. 暗链：隐藏样式 + 陌生外链 + 赌博色情类关键词是典型挂马（实报）；知名网站的正常链接即使隐藏也多为模板/统计代码（倾向误报）
+4. 敏感字：单个常用词（如"兼职/激情/地址"）在正常文章语境中命中多为词库泛匹配（倾向误报）；明确的赌博/色情内容才是实报
+5. 敏感信息泄露：真实密钥/Token 格式完整且非示例值（实报）；示例值/文档片段（误报）
+6. 证据不足以确认时，倾向判为误报
+
+输出 JSON 格式（严格遵循）：
+{"mark":"confirmed|false_positive","confidence":"high|medium|low","reasoning":"简要分析理由（50字以内）"}
+
+- confirmed: 弱点真实存在
+- false_positive: 误报（词库泛匹配/正常内容/防护拦截等）
+- confidence: 判断置信度`
+
 // Analyze 调用 AI 分析漏洞
 func Analyze(cfg Config, vuln VulnContext) (*Verdict, error) {
 	if !cfg.Enabled {
@@ -88,8 +115,12 @@ func Analyze(cfg Config, vuln VulnContext) (*Verdict, error) {
 	}
 
 	userPrompt := buildUserPrompt(vuln)
+	sys := systemPrompt
+	if vuln.Kind == "weakness" {
+		sys = weaknessSystemPrompt
+	}
 
-	respBody, err := callLLM(cfg, systemPrompt, userPrompt)
+	respBody, err := callLLM(cfg, sys, userPrompt)
 	if err != nil {
 		return nil, err
 	}
@@ -100,6 +131,9 @@ func Analyze(cfg Config, vuln VulnContext) (*Verdict, error) {
 
 // buildUserPrompt 构建用户提示词
 func buildUserPrompt(v VulnContext) string {
+	if v.Kind == "weakness" {
+		return buildWeaknessPrompt(v)
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "漏洞信息：\n")
 	fmt.Fprintf(&b, "- 规则ID: %s\n", v.VulnID)
@@ -126,6 +160,57 @@ func buildUserPrompt(v VulnContext) string {
 }
 
 // callLLM 调用 OpenAI 兼容 API（直连，不走全局出站代理）
+// weaknessTypeLabel 弱点类型中文化
+var weaknessTypeLabel = map[string]string{
+	"darklink": "暗链", "brokenlink": "坏链", "sensword": "敏感字", "wih": "敏感信息泄露",
+}
+
+// buildWeaknessPrompt 弱点研判用户提示词：补齐所属站点/页面/标题/状态码/引用位置等上下文
+func buildWeaknessPrompt(v VulnContext) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "弱点检测结果：\n")
+	if lbl := weaknessTypeLabel[v.VulnID]; lbl != "" {
+		fmt.Fprintf(&b, "- 类型: %s\n", lbl)
+	} else {
+		fmt.Fprintf(&b, "- 类型: %s\n", v.VulnID)
+	}
+	if v.Severity != "" {
+		fmt.Fprintf(&b, "- 风险等级: %s\n", v.Severity)
+	}
+	if v.SiteURL != "" {
+		fmt.Fprintf(&b, "- 所属站点: %s\n", v.SiteURL)
+	}
+	if v.PageURL != "" {
+		fmt.Fprintf(&b, "- 所属页面: %s\n", v.PageURL)
+	}
+	if v.PageTitle != "" {
+		fmt.Fprintf(&b, "- 页面标题: %s\n", truncate(v.PageTitle, 120))
+	}
+	if v.URL != "" {
+		fmt.Fprintf(&b, "- 触发链接/命中位置: %s\n", v.URL)
+	}
+	if v.Anchor != "" {
+		fmt.Fprintf(&b, "- 锚文本/命中词: %s\n", truncate(v.Anchor, 120))
+	}
+	if v.StatusCode != 0 {
+		fmt.Fprintf(&b, "- 状态码: %d\n", v.StatusCode)
+	}
+	if v.Detail != "" {
+		fmt.Fprintf(&b, "- 检测结论: %s\n", truncate(v.Detail, 400))
+	}
+	if v.Evidence != "" {
+		fmt.Fprintf(&b, "- 命中内容/上下文: %s\n", truncate(v.Evidence, 600))
+	}
+	if v.ContextHTML != "" {
+		fmt.Fprintf(&b, "- 引用位置（该链接在页面中的 HTML 片段）: %s\n", truncate(v.ContextHTML, 800))
+	}
+	if v.Response != "" {
+		fmt.Fprintf(&b, "\n--- 相关响应（如有） ---\n%s\n", truncate(v.Response, 2000))
+	}
+	fmt.Fprintf(&b, "\n请结合页面语境研判该弱点并输出 JSON。")
+	return b.String()
+}
+
 func callLLM(cfg Config, systemPrompt, userPrompt string) (string, error) {
 	reqBody := map[string]any{
 		"model": cfg.Model,

@@ -125,6 +125,9 @@ type Vulnerability struct {
 	Response    string    `json:"response"` // 检测响应报文
 	Mark        string    `json:"mark"`     // confirmed/false_positive/ignored/空=未标记
 	Scanner     string    `json:"scanner"`
+	AIMark      string    `json:"ai_mark"`      // AI 研判结论（confirmed/false_positive）
+	AIConfidence string   `json:"ai_confidence"` // 置信度
+	AIReasoning string    `json:"ai_reasoning"` // AI 推理依据（详情页展示）
 	FirstSeen   time.Time `json:"first_seen"`
 	LastSeen    time.Time `json:"last_seen"`
 }
@@ -204,7 +207,11 @@ type Weakness struct {
 	StatusCode int    `json:"status_code"`
 	Detail     string `json:"detail"`
 	Severity   string `json:"severity"`
-	Evidence   string `json:"evidence"` // WIH 命中内容 / 敏感字上下文
-	Context    string `json:"context"`  // 引用位置（链接类弱点）：祖先链 + 锚标签 HTML 片段
-	CreatedAt  string `json:"created_at"`
+	Evidence      string `json:"evidence"` // WIH 命中内容 / 敏感字上下文
+	Context       string `json:"context"`  // 引用位置（链接类弱点）：祖先链 + 锚标签 HTML 片段
+	Mark          string `json:"mark"`
+	AIMark        string `json:"ai_mark"`       // AI 研判结论（confirmed/false_positive）
+	AIConfidence  string `json:"ai_confidence"` // 置信度
+	AIReasoning   string `json:"ai_reasoning"`  // AI 推理依据（详情页展示）
+	CreatedAt     string `json:"created_at"`
 }

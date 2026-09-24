@@ -161,15 +161,22 @@ func (s *Store) SetWeaknessMark(id int64, mark string) error {
 	return err
 }
 
-// GetWeakness 单条弱点（AI 研判用）
+// GetWeakness 弱点详情（含标记/AI 研判结果/引用位置，详情弹窗用）
 func (s *Store) GetWeakness(id int64) (*model.Weakness, error) {
 	w := &model.Weakness{}
-	err := s.db.QueryRow(`SELECT id,project_id,web_url,type,url,anchor,status_code,detail,severity,evidence FROM weaknesses WHERE id=?`, id).
-		Scan(&w.ID, &w.ProjectID, &w.WebURL, &w.Type, &w.URL, &w.Anchor, &w.StatusCode, &w.Detail, &w.Severity, &w.Evidence)
+	err := s.db.QueryRow(`SELECT id,project_id,web_url,type,url,anchor,status_code,detail,severity,evidence,page_url,page_title,coalesce(context,''),coalesce(mark,''),coalesce(ai_mark,''),coalesce(ai_confidence,''),coalesce(ai_reasoning,'') FROM weaknesses WHERE id=?`, id).
+		Scan(&w.ID, &w.ProjectID, &w.WebURL, &w.Type, &w.URL, &w.Anchor, &w.StatusCode, &w.Detail, &w.Severity, &w.Evidence,
+			&w.PageURL, &w.PageTitle, &w.Context, &w.Mark, &w.AIMark, &w.AIConfidence, &w.AIReasoning)
 	if err != nil {
 		return nil, err
 	}
 	return w, nil
+}
+
+// SetWeaknessAI AI 研判结果留存（标记照旧写 mark，AI 明细单独留存供详情页展示）
+func (s *Store) SetWeaknessAI(id int64, mark, confidence, reasoning string) error {
+	_, err := s.db.Exec(`UPDATE weaknesses SET ai_mark=?, ai_confidence=?, ai_reasoning=? WHERE id=?`, mark, confidence, reasoning, id)
+	return err
 }
 
 // UnmarkedWeaknesses 项目内未标记弱点（批量 AI 研判用）

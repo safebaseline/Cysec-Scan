@@ -94,7 +94,7 @@ const LABEL_MAP: Record<string, string> = {
   page_url: '所属页面', page_title: '标题',
   client_ip: '来源 IP', result: '结果',
   type: '类型',
-  darklink: '暗链', brokenlink: '坏链', sensword: '敏感字', wih: 'WIH JS',
+  darklink: '暗链', brokenlink: '坏链', sensword: '敏感字', wih: '敏感信息',
   critical: '严重', high: '高危', medium: '中危', low: '低危', info: '信息',
   confirmed: '实报', false_positive: '误报', ignored: '忽略',
   running: '运行中', pending: '排队中', paused: '已暂停', done: '已完成', failed: '失败', canceled: '已终止',
@@ -167,6 +167,13 @@ function Dashboard({ pid }: { pid: number }) { const [stats, setStats] = useStat
   if (!stats) return <div>加载中…</div>;
   const sev = stats.vuln_by_severity || {};
   const wk = stats.weakness_by_type || {};
+  // 每行内联"（实报a/误报b/未标记c）"细分：mks = {等级/类型: {confirmed, false_positive, '': n}}
+  const sevMarks = stats.vuln_by_severity_marks || {};
+  const wkMarks = stats.weakness_by_type_marks || {};
+  const markBits = (m: any) => {
+    const c = (m && m.confirmed) || 0, f = (m && m.false_positive) || 0, u = (m && m['']) || 0;
+    return <span className="mark-bits">（<span className="bit-ok">实报{c}</span>/<span className="bit-err">误报{f}</span>/未标记{u}）</span>;
+  };
   const cards = [['IP 资产', stats.ips], ['域名', stats.domains], ['端口', stats.ports], ['Web 资产', stats.web], ['URL', stats.urls], ['漏洞', stats.vulns], ['弱点', stats.weaknesses]] as [string, number][];
   const modProps = (id: string) => ({
     className: 'card dash-module ' + (overMod === id && dragMod !== id ? 'drag-over ' : '') + (id === 'stats' ? 'dash-s12' : id.startsWith('recent') ? 'dash-s6' : 'dash-s4'),
@@ -180,13 +187,13 @@ function Dashboard({ pid }: { pid: number }) { const [stats, setStats] = useStat
   const title = (t: string) => (<div className="card-title">{editing && <span className="drag-handle">⠿</span>}{t}</div>);
   const modules: Record<string, ReactNode> = {
     stats: (<div {...modProps('stats')}><div className="grid" style={{ margin: 0 }}>{cards.map(([l, v]) => (<div key={l} className="card" style={{ marginBottom: 0 }}><div className="stat-num">{v}</div><div className="stat-label">{l}</div></div>))}</div></div>),
-    vuln: (<div {...modProps('vuln')}>{title('漏洞风险（实时）')}<div className="sev-list">{['critical', 'high', 'medium', 'low', 'info'].map((x) => (<div key={x} className="sev-row"><SevTag sev={x} /><b>{sev[x] || 0}</b></div>))}
+    vuln: (<div {...modProps('vuln')}>{title('漏洞风险（实时）')}<div className="sev-list">{['critical', 'high', 'medium', 'low', 'info'].map((x) => (<div key={x} className="sev-row"><SevTag sev={x} /><b>{sev[x] || 0}{markBits(sevMarks[x])}</b></div>))}
       <div className="sev-row"><span className="muted">未研判</span><b>{stats.vuln_unmarked || 0}</b></div></div></div>),
     weak: (<div {...modProps('weak')}>{title('弱点分布（实时）')}<div className="sev-list">
-      <div className="sev-row"><span className="pill"><span className="dot" />暗链</span><b>{wk.darklink || 0}</b></div>
-      <div className="sev-row"><span className="pill"><span className="dot" />坏链</span><b>{wk.brokenlink || 0}</b></div>
-      <div className="sev-row"><span className="pill"><span className="dot" />敏感字</span><b>{wk.sensword || 0}</b></div>
-      <div className="sev-row"><span className="pill"><span className="dot" />WIH JS</span><b>{wk.wih || 0}</b></div>
+      <div className="sev-row"><span className="pill"><span className="dot" />暗链</span><b>{wk.darklink || 0}{markBits(wkMarks.darklink)}</b></div>
+      <div className="sev-row"><span className="pill"><span className="dot" />坏链</span><b>{wk.brokenlink || 0}{markBits(wkMarks.brokenlink)}</b></div>
+      <div className="sev-row"><span className="pill"><span className="dot" />敏感字</span><b>{wk.sensword || 0}{markBits(wkMarks.sensword)}</b></div>
+      <div className="sev-row"><span className="pill"><span className="dot" />敏感信息</span><b>{wk.wih || 0}{markBits(wkMarks.wih)}</b></div>
       <div className="sev-row"><span className="muted">未研判</span><b>{stats.weakness_unmarked || 0}</b></div></div></div>),
     recentVuln: (<div {...modProps('recentVuln')}>{title('最近漏洞（实时）')}{recentVulns.length === 0 ? <div className="muted">暂无数据</div> : (<table className="tbl"><tbody>
       {recentVulns.map((v: any) => (<tr key={v.id}><td style={{ width: 70 }}><SevTag sev={v.severity} /></td>
@@ -324,7 +331,7 @@ function Vulns({ pid }: { pid: number }) { const [sev, setSev] = useState(''); c
     try { await api.vulnDelete(id); await refresh(); if (detail?.id === id) setDetail(null); } catch (e: any) { alert(e.message); }
   };
   const doAI = async (id: number) => { setAiBusy(id); setAiMsg(''); try { const v = await api.aiAnalyze(id); setAiMsg(`AI 研判: ${v.mark === 'confirmed' ? '实报' : '误报'}（${v.confidence}）${v.reasoning || ''}`); await refresh(); if (detail?.id === id) setDetail(await api.vulnDetail(id)); } catch (e: any) { setAiMsg('AI 失败: ' + e.message); } finally { setAiBusy(0); } };
-  return (<div><div className="toolbar">
+  return (<div><Card title="漏洞风险"><div className="toolbar">
     {['', 'critical', 'high', 'medium', 'low', 'info'].map((s) => (<button key={s} className={sev === s ? 'active' : ''} onClick={() => { setSev(s); setPg(1); }}>{s ? label(s) : '全部'}</button>))}
     <input className="search" placeholder="搜索漏洞…" value={q} onChange={(e) => { setQ(e.target.value); setPg(1); }} />
     <select value={markFilter} onChange={(e) => { setMarkFilter(e.target.value); setPg(1); }}>
@@ -337,7 +344,7 @@ function Vulns({ pid }: { pid: number }) { const [sev, setSev] = useState(''); c
     <button onClick={() => downloadExport(pid, 'vulnerabilities', 'json')}>导出 JSON</button>
     <button style={{ marginLeft: 'auto' }} onClick={doAIAll} disabled={aiAllBusy}>{aiAllBusy ? 'AI研判中…' : '🤖 AI全部研判'}</button>
     <button onClick={doClearAll}>全部删除</button></div>
-    <Card><Table cols={['severity', 'vuln_id', 'name', 'ip', 'port', 'url', 'component', 'first_seen', 'mark']} rows={data.items || []}
+    <Table cols={['severity', 'vuln_id', 'name', 'ip', 'port', 'url', 'component', 'first_seen', 'mark']} rows={data.items || []}
       onRow={(r) => api.vulnDetail(r.id).then(setDetail).catch(() => undefined)}
       actions={(v: any) => (<span>
         <button disabled={aiBusy === v.id} onClick={() => doAI(v.id)}>{aiBusy === v.id ? 'AI…' : 'AI研判'}</button>
@@ -362,6 +369,11 @@ function Vulns({ pid }: { pid: number }) { const [sev, setSev] = useState(''); c
           <button disabled={aiBusy === detail.id} onClick={() => doAI(detail.id)}>{aiBusy === detail.id ? 'AI 分析中…' : '🤖 AI 研判'}</button>
           <button onClick={() => doDelete(detail.id)}>删除漏洞</button></div>
         {aiMsg && <div className="ok" style={{ marginTop: 4 }}>{aiMsg}</div>}
+        {(detail.ai_mark || detail.ai_reasoning) ? (<>
+          <h4>AI 研判结果</h4>
+          <div><b>结论：</b>{MARK_LABEL[detail.ai_mark] || detail.ai_mark}　{detail.ai_confidence && <><b>置信度：</b>{detail.ai_confidence}</>}</div>
+          {detail.ai_reasoning && <pre className="logs" style={{ marginTop: 6 }}>{detail.ai_reasoning}</pre>}
+        </>) : (<div className="muted" style={{ marginTop: 8 }}>AI 研判结果：尚未研判，点上方「🤖 AI 研判」生成。</div>)}
         <h4>请求报文</h4><pre className="logs">{detail.request || '（无）'}</pre>
         <h4>响应报文</h4><pre className="logs">{detail.response || '（无）'}</pre></div></div></div>)}</div>); }
 
@@ -459,7 +471,7 @@ function WeaknessPanel({ pid }: { pid: number }) { const [rows, setRows] = useSt
   const tkWeak = useTopicTick('weaknesses');
   useEffect(() => { const t = setTimeout(() => { api.weaknesses(pid, pg, 20, q, type, markF).then((d) => { setRows(d.items || []); setTotal(d.total || 0); if (!(d.items || []).length && pg > 1) setPg(pg - 1); }).catch(() => undefined); }, q ? 300 : 0); return () => clearTimeout(t); }, [pid, pg, q, type, markF, tkWeak]);
   const doMark = async (id: number, mark: string) => { try { await api.weaknessMark(id, mark); setRows(rows.map((x) => x.id === id ? { ...x, mark } : x)); if (detail?.id === id) setDetail({ ...detail, mark }); } catch (e: any) { setMsg(e.message); } };
-  const doAI = async (id: number) => { setAiBusy(id); setMsg(''); try { const v = await api.weaknessAI(id); setRows(rows.map((x) => x.id === id ? { ...x, mark: v.mark } : x)); if (detail?.id === id) setDetail({ ...detail, mark: v.mark }); setMsg('AI 研判：' + (v.mark || '-') + '（' + (v.confidence || '') + '）' + (v.reasoning || '')); } catch (e: any) { setMsg('AI 失败: ' + e.message); } finally { setAiBusy(0); } };
+  const doAI = async (id: number) => { setAiBusy(id); setMsg(''); try { const v = await api.weaknessAI(id); setRows(rows.map((x) => x.id === id ? { ...x, mark: v.mark, ai_mark: v.mark, ai_confidence: v.confidence, ai_reasoning: v.reasoning } : x)); if (detail?.id === id) setDetail({ ...detail, mark: v.mark, ai_mark: v.mark, ai_confidence: v.confidence, ai_reasoning: v.reasoning }); setMsg('AI 研判：' + (v.mark || '-') + '（' + (v.confidence || '') + '）' + (v.reasoning || '')); } catch (e: any) { setMsg('AI 失败: ' + e.message); } finally { setAiBusy(0); } };
   const doAIAll = async () => { setAiAllBusy(true); setMsg(''); try { const r = await api.weaknessAIAll(pid); setMsg(r.count > 0 ? `AI 批量研判已启动：${r.count} 个弱点` : '无未标记弱点需要研判'); if (r.count > 0) setTimeout(() => setPg(1), 30000); } catch (e: any) { setMsg('AI 失败: ' + e.message); } finally { setAiAllBusy(false); } };
   useEffect(() => { api.getWeaknessSettings().then(setCfg).catch(() => undefined); }, []);
   const saveCfg = async () => { try { const r = await api.setWeaknessSettings(cfg); setCfg({ ...r, senssub: cfg.senssub }); setMsg('已保存并即时生效'); } catch (e: any) { setMsg(e.message); } };
@@ -495,7 +507,7 @@ function WeaknessPanel({ pid }: { pid: number }) { const [rows, setRows] = useSt
   };
   const saveSub = async () => { try { const r = await api.setSensSub(sub); setCfg({ ...cfg, senssub: r }); setSubMsg({ ok: true, text: '订阅配置已保存' }); } catch (e: any) { setSubMsg({ ok: false, text: e.message }); } };
   const doUpdateSub = async () => { setSubBusy(true); setSubMsg(null); try { const v = await api.updateSensSub(sub); setCfg({ ...cfg, senssub: v }); setSubMsg(v.state?.last_ok ? { ok: true, text: `更新成功：${v.state.word_count} 词` } : { ok: false, text: '部分文件拉取失败，见状态明细' }); } catch (e: any) { setSubMsg({ ok: false, text: e.message }); } finally { setSubBusy(false); } };
-  const TYPES: [string, string][] = [['', '全部'], ['darklink', '暗链'], ['brokenlink', '坏链'], ['sensword', '敏感字'], ['wih', 'WIH JS']];
+  const TYPES: [string, string][] = [['', '全部'], ['darklink', '暗链'], ['brokenlink', '坏链'], ['sensword', '敏感字'], ['wih', '敏感信息']];
   // 导出当前筛选（类型/搜索/标记）下的全部弱点，口径与列表一致
   const exportWeakness = (format: string) => {
     const qs = `project_id=${pid}&type=weaknesses&q=${encodeURIComponent(q)}&wk=${type}&mark=${markF}&format=${format}`;
@@ -514,10 +526,10 @@ function WeaknessPanel({ pid }: { pid: number }) { const [rows, setRows] = useSt
       <select value={markF} onChange={(e) => { setMarkF(e.target.value); setPg(1); }}>
         <option value="">全部标记</option><option value="unmarked">未标记</option><option value="confirmed">实报</option><option value="false_positive">误报</option></select>
       <span className="muted">共 {total} 条</span>
-      <button disabled={aiAllBusy} onClick={doAIAll}>{aiAllBusy ? '研判中…' : '🤖 AI全部研判'}</button>
       <button onClick={() => exportWeakness('csv')}>导出 CSV</button>
       <button onClick={() => exportWeakness('json')}>导出 JSON</button>
-      <button style={{ marginLeft: 'auto' }} onClick={async () => { if (await askConfirm('清空当前筛选类型的全部弱点？')) { const r = await api.weaknessClear(pid, type); setMsg('已清空 ' + (r.deleted || 0) + ' 条'); setPg(1); } }}>清空</button></div>
+      <button style={{ marginLeft: 'auto' }} disabled={aiAllBusy} onClick={doAIAll}>{aiAllBusy ? '研判中…' : '🤖 AI全部研判'}</button>
+      <button onClick={async () => { if (await askConfirm('清空当前筛选类型的全部弱点？')) { const r = await api.weaknessClear(pid, type); setMsg('已清空 ' + (r.deleted || 0) + ' 条'); setPg(1); } }}>清空</button></div>
       <Table cols={['created_at', 'type', 'severity', 'web_url', 'page_url', 'url', 'anchor', 'status_code', 'detail', 'mark']} rows={rows} onRow={(r: any) => setDetail(r)}
         actions={(r: any) => (<span>
           <button disabled={aiBusy === r.id} onClick={() => doAI(r.id)}>{aiBusy === r.id ? '研判中…' : 'AI研判'}</button>
@@ -540,13 +552,18 @@ function WeaknessPanel({ pid }: { pid: number }) { const [rows, setRows] = useSt
         {detail.detail && <div><b>详情：</b>{detail.detail}</div>}
         {detail.evidence && (<><h4>命中内容</h4><pre className="logs">{detail.evidence}</pre></>)}
         {detail.context ? (<><h4>引用位置（该 URL 在页面中出现的地方）</h4><pre className="logs">{detail.context}</pre></>) : (<div className="muted" style={{ marginTop: 8 }}>引用位置：该弱点产生于旧版本扫描或非链接类检测，重新扫描对应站点可补充。</div>)}
-        <div style={{ marginTop: 10 }}><button disabled={aiBusy === detail.id} onClick={() => doAI(detail.id)}>🤖 AI研判</button>
+        {(detail.ai_mark || detail.ai_reasoning) ? (<>
+          <h4>AI 研判结果</h4>
+          <div><b>结论：</b>{MARK_LABEL[detail.ai_mark] || detail.ai_mark}　{detail.ai_confidence && <><b>置信度：</b>{detail.ai_confidence}</>}</div>
+          {detail.ai_reasoning && <pre className="logs" style={{ marginTop: 6 }}>{detail.ai_reasoning}</pre>}
+        </>) : (<div className="muted" style={{ marginTop: 8 }}>AI 研判结果：尚未研判，点上方「🤖 AI研判」生成。</div>)}
+        <div style={{ marginTop: 10 }}><button disabled={aiBusy === detail.id} onClick={() => doAI(detail.id)}>{aiBusy === detail.id ? 'AI 研判中…' : '🤖 AI研判'}</button>
           <button onClick={() => doMark(detail.id, 'confirmed')}>实报</button>
           <button onClick={() => doMark(detail.id, 'false_positive')}>误报</button>
           {detail.mark && <button onClick={() => doMark(detail.id, '')}>取消</button>}</div>
       </div></div></div>)}
     {cfg && (<Card title="弱点检测设置"><div className="form">
-      <div className="toolbar"><label className="inline"><input type="checkbox" checked={!!cfg.enabled} onChange={(e) => setCfg({ ...cfg, enabled: e.target.checked })} />扫描时执行弱点检测（链接爬取/暗链/坏链/敏感字/WIH JS）</label>
+      <div className="toolbar"><label className="inline"><input type="checkbox" checked={!!cfg.enabled} onChange={(e) => setCfg({ ...cfg, enabled: e.target.checked })} />扫描时执行弱点检测（链接爬取/暗链/坏链/敏感字/敏感信息）</label>
         <label className="inline"><input type="checkbox" checked={!cfg.dark_verify_disabled} onChange={(e) => setCfg({ ...cfg, dark_verify_disabled: !e.target.checked })} />暗链目标内容核验（隐藏外链请求目标页并命中暗链关键词才报）</label></div>
       <div className="toolbar">
         <label>每站点最大爬取页面数<NumInput width={80} value={cfg.max_pages || 50} min={1} max={9999} onChange={(v) => setCfg({ ...cfg, max_pages: v })} /></label>
@@ -983,7 +1000,7 @@ function WihPanel() { const [cfg, setCfg] = useState<any>(null); const [msg, set
   const addRule = async () => { const id = await askText('新增 WIH 规则', '规则 ID（如 my_ak）'); if (!id) return; const pattern = await askText('新增规则 ' + id, '正则表达式'); if (!pattern) return; save({ ...cfg, rules: [...cfg.rules, { id, name: id, enabled: true, severity: 'info', pattern }] }); };
   const runTest = async () => { if (!target.trim()) return; setRes({ loading: true }); try { setRes(await api.testWih(target.trim())); } catch (e: any) { setRes({ error: e.message }); } };
   if (!cfg) return null;
-  return (<Card title="WIH JS 敏感信息检测"><div className="toolbar">
+  return (<Card title="敏感信息检测"><div className="toolbar">
     <label className="inline"><input type="checkbox" checked={!!cfg.enabled_in_scan} onChange={(e) => setCfg({ ...cfg, enabled_in_scan: e.target.checked })} />扫描时执行（随勾选"弱点检测"的任务）</label>
     <label>每站点 JS 上限<input type="number" style={{ width: 70 }} value={cfg.max_js_per_site} onChange={(e) => setCfg({ ...cfg, max_js_per_site: +e.target.value })} /></label>
     <button onClick={() => save(cfg)}>保存</button>
@@ -1005,7 +1022,7 @@ function WihPanel() { const [cfg, setCfg] = useState<any>(null); const [msg, set
         <td><input type="checkbox" checked={r.enabled} onChange={(e) => toggleRule(r.id, e.target.checked)} /></td>
         <td className="row-act"><button onClick={() => editPattern(r)}>编辑</button> <button onClick={() => delRule(r)}>删除</button></td>
       </tr>))}</tbody></table>
-    <div className="muted" style={{ marginTop: 6 }}>扫描时随"弱点检测"阶段执行：对站点首页与引用 JS（限额内）做规则匹配，命中归入弱点管理（类型：WIH JS）；未勾选弱点检测的任务不执行。</div>
+    <div className="muted" style={{ marginTop: 6 }}>扫描时随"弱点检测"阶段执行：对站点首页与引用 JS（限额内）做规则匹配，命中归入弱点管理（类型：敏感信息）；未勾选弱点检测的任务不执行。</div>
   </Card>); }
 
 function VulnRules() { const [data, setData] = useState<any>({ items: [], total: 0 }); const [stats, setStats] = useState<any>(null);
